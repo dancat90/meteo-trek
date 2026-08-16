@@ -26,7 +26,7 @@ import {
   calcolaEta,
   tempoAllaDistanza,
 } from '../js/eta.js';
-import { scegliModelli, dentroBox, quindiciMinDisponibile } from '../js/api/modelli.js';
+import { scegliModelli, dentroBox, quindiciMinDisponibile, motivoNiente15Min } from '../js/api/modelli.js';
 import {
   parseSanificato,
   serie,
@@ -131,6 +131,29 @@ console.log('── Parser GPX ──');
     errore = e;
   }
   test('GPX vuoto lancia errore', errore !== null);
+
+  // Regressioni dalla review adversariale
+  const gpxNs = `<ns0:gpx xmlns:ns0="http://www.topografix.com/GPX/1/1"><ns0:trk>
+    <ns0:name>Con namespace</ns0:name><ns0:trkseg>
+    <ns0:trkpt lat="46.5" lon="11.3"><ns0:ele>2100</ns0:ele></ns0:trkpt>
+    <ns0:trkpt lat="46.51" lon="11.3"><ns0:ele>2150</ns0:ele></ns0:trkpt>
+  </ns0:trkseg></ns0:trk></ns0:gpx>`;
+  const pNs = parseGpx(gpxNs);
+  test('namespace prefissato accettato', pNs.punti.length === 2 && pNs.punti[0].eleM === 2100);
+  test('nome con namespace', pNs.nome === 'Con namespace');
+
+  const gpxEleRotto = `<gpx><trk><trkseg>
+    <trkpt lat="46.0" lon="11.0"><ele>.</ele></trkpt>
+    <trkpt lat="46.01" lon="11.0"><ele>1000</ele></trkpt>
+  </trkseg></trk></gpx>`;
+  const pRotto = parseGpx(gpxEleRotto);
+  test('ele degenere "." diventa null, mai NaN', pRotto.punti[0].eleM === null);
+
+  const gpxCdata = `<gpx><trk><name><![CDATA[Anello del Gr&#xE8;s]]></name><trkseg>
+    <trkpt lat="46.0" lon="11.0"/><trkpt lat="46.01" lon="11.0"/>
+  </trkseg></trk></gpx>`;
+  test('CDATA nel nome ripulito', parseGpx(gpxCdata).nome === 'Anello del Grès',
+    parseGpx(gpxCdata).nome);
 }
 
 console.log('── Percorso ──');
@@ -255,6 +278,9 @@ console.log('── Selezione modello ──');
   test('15 min non nativi al Gran Sasso', quindiciMinDisponibile(granSasso, lead24) === false);
   test('15 min oltre orizzonte d2', quindiciMinDisponibile(alpi, 96) === false);
   test('dentroBox mondo con box null', dentroBox(alpi, null) === true);
+  test('motivo 15 min: area al Gran Sasso', motivoNiente15Min(granSasso, lead24) === 'area');
+  test('motivo 15 min: orizzonte sulle Alpi a +4 gg', motivoNiente15Min(alpi, 96) === 'orizzonte');
+  test('motivo 15 min: null quando disponibile', motivoNiente15Min(alpi, lead24) === null);
 }
 
 console.log('── Client meteo (parsing puro) ──');

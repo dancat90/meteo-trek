@@ -5,7 +5,7 @@
 // tile della mappa NON passano MAI dalla cache: devono essere fresche.
 // ─────────────────────────────────────────────────────────────────────────
 
-const CACHE = 'meteo-trek-v1';
+const CACHE = 'meteo-trek-v2';
 
 const CDN_LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
 
@@ -46,9 +46,17 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('activate', (e) => {
+  // CacheStorage è partizionato per ORIGIN, non per scope: su
+  // dancat90.github.io convivono anche meteo-rotta e sleep-countdown.
+  // La pulizia deve toccare SOLO le cache col nostro prefisso, altrimenti
+  // spazza l'offline delle altre PWA (e loro il nostro).
   e.waitUntil(
     caches.keys().then((chiavi) =>
-      Promise.all(chiavi.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      Promise.all(
+        chiavi
+          .filter((k) => k.startsWith('meteo-trek-') && k !== CACHE)
+          .map((k) => caches.delete(k))
+      )
     )
   );
   self.clients.claim();

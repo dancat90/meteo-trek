@@ -180,6 +180,35 @@ export async function meteoModello({
   return { perCampione, copertura: coperti / campioni.length };
 }
 
+// ── Quota reale delle celle di griglia del modello ──────────────────────
+// Con `elevation` esplicito la risposta fa ECO del valore inviato
+// (verificato live): per conoscere la quota VERA della cella serve una
+// chiamata separata con elevation=nan (downscaling disattivato → il campo
+// elevation della risposta è l'altezza media della cella). Chiamata
+// leggera: una variabile, un giorno. Null in caso di fallimento: l'app
+// rinuncia all'avviso di scostamento, senza mostrare dati fittizi.
+export async function quoteCelle(campioni, modello) {
+  try {
+    const localita = await chiamataMultiLocalita(
+      API.openMeteo,
+      campioni,
+      {
+        models: modello.id,
+        hourly: 'temperature_2m',
+        forecast_days: '1',
+        timezone: 'UTC',
+        cell_selection: 'land',
+        elevation: campioni.map(() => 'nan').join(','),
+      }
+    );
+    return campioni.map((_, i) =>
+      Number.isFinite(localita[i]?.elevation) ? Math.round(localita[i].elevation) : null
+    );
+  } catch {
+    return null;
+  }
+}
+
 // ── Fuso orario IANA del punto di partenza ──────────────────────────────
 // Micro-chiamata con timezone=auto. Null in caso di fallimento: il
 // chiamante degrada a Europe/Rome con avviso.

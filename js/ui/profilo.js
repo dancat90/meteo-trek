@@ -21,6 +21,7 @@ export function renderProfilo(el, { profilo, campioni, tacche }, onSelezione = n
   const validi = profilo.filter((p) => Number.isFinite(p.e));
   if (validi.length < 2) {
     el.innerHTML = '<p class="nota">Profilo non disponibile (quote assenti)</p>';
+    el.hidden = false; // senza unhide la nota resterebbe invisibile
     return;
   }
   const dMax = profilo[profilo.length - 1].d || 1;

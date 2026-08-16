@@ -2,20 +2,34 @@
 // Parser GPX testuale puro: niente DOMParser, deve girare anche in Node
 // per i test. I GPX di Komoot, Outdooractive, Garmin e simili sono
 // machine-generated e regolari: il parsing a espressioni regolari
-// tollera l'ordine degli attributi e i tag self-closing.
+// tollera l'ordine degli attributi, i tag self-closing e i prefissi di
+// namespace (es. <ns0:trkpt> prodotto da ElementTree in Python).
 // ─────────────────────────────────────────────────────────────────────────
+
+// Prefisso di namespace XML opzionale (ns0:, gpx:, ...)
+const PREF = '(?:[A-Za-z_][\\w.-]*:)?';
+// Numero XML: niente token degeneri tipo "." o "-." (parseFloat li
+// accetterebbe come NaN e avvelenerebbe la catena dei dislivelli)
+const NUM = '-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?';
 
 // Estrae il primo <name>...</name> utile come nome del percorso
 function estraiNome(testo) {
-  // Preferisce il name dentro <trk>, ripiega su quello di <metadata>
-  const trk = testo.match(/<trk\b[^>]*>[\s\S]*?<name>\s*([\s\S]*?)\s*<\/name>/);
-  if (trk) return decodificaEntita(trk[1]);
-  const meta = testo.match(/<name>\s*([\s\S]*?)\s*<\/name>/);
-  return meta ? decodificaEntita(meta[1]) : null;
+  // Preferisce il name dentro <trk>, ripiega sul primo del documento
+  const reTrk = new RegExp(
+    `<${PREF}trk\\b[^>]*>[\\s\\S]*?<${PREF}name>\\s*([\\s\\S]*?)\\s*</${PREF}name>`
+  );
+  const trk = testo.match(reTrk);
+  if (trk) return decodificaTesto(trk[1]);
+  const meta = testo.match(new RegExp(`<${PREF}name>\\s*([\\s\\S]*?)\\s*</${PREF}name>`));
+  return meta ? decodificaTesto(meta[1]) : null;
 }
 
-function decodificaEntita(s) {
+// CDATA + entità nominate e numeriche (&#232; &#x2019; ...)
+function decodificaTesto(s) {
   return s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
@@ -28,22 +42,25 @@ function decodificaEntita(s) {
 // i trkseg multipli risultano concatenati per costruzione.
 function estraiPunti(testo, tag) {
   const punti = [];
-  const re = new RegExp(
-    `<${tag}\\b([^>]*?)(?:/>|>([\\s\\S]*?)</${tag}>)`,
-    'g'
-  );
+  const re = new RegExp(`<${PREF}${tag}\\b([^>]*?)(?:/>|>([\\s\\S]*?)</${PREF}${tag}>)`, 'g');
+  const reLat = new RegExp(`lat\\s*=\\s*["']\\s*(${NUM})\\s*["']`);
+  const reLon = new RegExp(`lon\\s*=\\s*["']\\s*(${NUM})\\s*["']`);
+  const reEle = new RegExp(`<${PREF}ele>\\s*(${NUM})\\s*</${PREF}ele>`);
   let m;
   while ((m = re.exec(testo)) !== null) {
     const attrs = m[1];
     const corpo = m[2] || '';
-    const lat = attrs.match(/lat\s*=\s*["']\s*(-?[\d.]+)\s*["']/);
-    const lon = attrs.match(/lon\s*=\s*["']\s*(-?[\d.]+)\s*["']/);
+    const lat = attrs.match(reLat);
+    const lon = attrs.match(reLon);
     if (!lat || !lon) continue;
-    const ele = corpo.match(/<ele>\s*(-?[\d.]+)\s*<\/ele>/);
+    const ele = corpo.match(reEle);
+    const eleVal = ele ? parseFloat(ele[1]) : null;
     const p = {
       lat: parseFloat(lat[1]),
       lon: parseFloat(lon[1]),
-      eleM: ele ? parseFloat(ele[1]) : null,
+      // Solo quote finite: un ele malformato diventa null (quota assente),
+      // mai NaN — i NaN bypasserebbero in silenzio tutte le guardie a valle
+      eleM: Number.isFinite(eleVal) ? eleVal : null,
     };
     if (Number.isFinite(p.lat) && Number.isFinite(p.lon)) punti.push(p);
   }

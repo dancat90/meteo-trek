@@ -76,6 +76,11 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
         }
       }
 
+      // Campione senza dati: mai il verde "buono" su un tratto ignoto
+      const rischioHtml = c.senzaDati
+        ? '<span class="cella-rischio"><span class="chip" style="background:#8b949e"></span>n/d</span>'
+        : `<span class="cella-rischio"><span class="chip" style="background:${COLORI_SEVERITA[score]}"></span>${ETICHETTE_RISCHIO[score]}</span>`;
+
       const dettagli = righeDettaglio(c, vFmt, uVento);
       return `
         <tr class="riga-dati" data-idx="${i}">
@@ -90,7 +95,7 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
           <td>${num(v.shortwave_radiation, 0)}</td>
           <td>${pop}</td>
           <td>${mm}</td>
-          <td><span class="cella-rischio"><span class="chip" style="background:${COLORI_SEVERITA[score]}"></span>${ETICHETTE_RISCHIO[score]}</span></td>
+          <td>${rischioHtml}</td>
         </tr>
         <tr class="riga-dettagli" hidden><td colspan="12">${dettagli}</td></tr>`;
     })
@@ -112,6 +117,9 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
 }
 
 function righeDettaglio(c, vFmt, uVento) {
+  if (c.senzaDati) {
+    return 'dati meteo non disponibili su questo tratto (fuori dominio del modello)';
+  }
   const v = c.valori || {};
   const parti = [];
   const wmo = descriviWmo(v.weather_code);

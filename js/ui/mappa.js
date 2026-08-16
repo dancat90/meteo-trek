@@ -58,6 +58,13 @@ function aggiungiLegenda() {
   controllo.addTo(mappa);
 }
 
+// Svuota la traccia disegnata (cambio percorso: mai la traccia vecchia
+// sotto un percorso nuovo)
+export function pulisciTraccia() {
+  layerTraccia?.clearLayers();
+  markerCampioni = [];
+}
+
 // Disegna la traccia colorata e i marker dei campioni.
 // traccia: [{lat, lon, d}] (decimata); campioni: voci arricchite con
 // { lat, lon, dCumKm, score, popupHtml }. onSelezione(i) al click.
@@ -102,7 +109,8 @@ export function disegnaTraccia({ traccia, campioni }, onSelezione = null) {
       radius: 5,
       color: '#ffffff',
       weight: 1.5,
-      fillColor: COLORI_SEVERITA[c.score ?? 0],
+      // Campione senza dati: grigio neutro, mai il verde "buono"
+      fillColor: c.senzaDati ? '#8b949e' : COLORI_SEVERITA[c.score ?? 0],
       fillOpacity: 0.95,
     }).addTo(layerTraccia);
     if (c.popupHtml) m.bindPopup(`<div class="popup-punto">${c.popupHtml}</div>`);

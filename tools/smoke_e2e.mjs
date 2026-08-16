@@ -12,7 +12,7 @@ import { percorsoDaKomoot, percorsoDaGpx } from '../js/percorso.js';
 import { calcolaEta, orarioAllaDistanza } from '../js/eta.js';
 import { campionaTraccia, bboxPunti } from '../js/geo.js';
 import { scegliModelli, quindiciMinDisponibile } from '../js/api/modelli.js';
-import { meteoModello, fusoOrario } from '../js/api/meteo.js';
+import { meteoModello, fusoOrario, quoteCelle } from '../js/api/meteo.js';
 import { ensemblePrecipitazione } from '../js/api/ensemble.js';
 import { VARIABILI_PRIMARIO } from '../js/config.js';
 import { oraApiUtc, dataLocaleAUtc, formattaOra } from '../js/tempo.js';
@@ -128,6 +128,24 @@ try {
   await pipeline('Outdooractive Rappensee', percorsoDaGpx(gpx, { fonte: 'outdooractive' }));
 } catch (e) {
   console.error(`ERRORE caso Outdooractive: ${e.message}`);
+  errori++;
+}
+
+// Caso 4: quota VERA delle celle via elevation=nan (deve differire dalla
+// quota sentiero, non farne eco)
+try {
+  const campioni = [
+    { lat: 42.47, lon: 13.56, eleM: 2600 },
+    { lat: 46.5, lon: 11.3, eleM: 2200 },
+  ];
+  const celle = await quoteCelle(campioni, { id: 'italia_meteo_arpae_icon_2i' });
+  console.log(`\n── Quote celle ── sentiero [2600, 2200] → celle [${celle}]`);
+  if (!celle || celle.every((q, i) => q === campioni[i].eleM)) {
+    console.error('ERRORE: quote celle nulle o eco della quota inviata');
+    errori++;
+  }
+} catch (e) {
+  console.error(`ERRORE quote celle: ${e.message}`);
   errori++;
 }
 

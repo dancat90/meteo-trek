@@ -88,3 +88,11 @@ export function scegliModelli(bbox, leadOreMax) {
 export function quindiciMinDisponibile(bbox, leadOreMax) {
   return dentroBox(bbox, MODELLI.icon_d2.box) && leadOreMax <= MODELLI.icon_d2.orizzonteOre;
 }
+
+// Perché il 15 minuti non c'è: 'area' (fuori dominio ICON-D2) oppure
+// 'orizzonte' (gita oltre le sue 48 ore). Null se invece è disponibile.
+export function motivoNiente15Min(bbox, leadOreMax) {
+  if (!dentroBox(bbox, MODELLI.icon_d2.box)) return 'area';
+  if (leadOreMax > MODELLI.icon_d2.orizzonteOre) return 'orizzonte';
+  return null;
+}

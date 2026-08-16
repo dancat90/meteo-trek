@@ -13,15 +13,15 @@ import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc } from './tempo
 import { campionaTraccia, bboxPunti } from './geo.js';
 import { percorsoDaGpx, percorsoDaKomoot, costruisciPercorso, campioniPerQuota, applicaQuote } from './percorso.js';
 import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza } from './eta.js';
-import { scegliModelli, quindiciMinDisponibile } from './api/modelli.js';
-import { meteoModello, fusoOrario, quoteDem } from './api/meteo.js';
+import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/modelli.js';
+import { meteoModello, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
 import { ensemblePrecipitazione } from './api/ensemble.js';
 import { estraiUserId, estraiTourId, elencaTourPianificati, coordinateTour, dettagliTour } from './api/komoot.js';
 import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
 import { percepita, FONTE_PERCEPITA } from './percepita.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
 import { affidabilita, etichettaAffidabilita } from './affidabilita.js';
-import { initMappa, disegnaTraccia, evidenziaCampione, escapeHtml } from './ui/mappa.js';
+import { initMappa, disegnaTraccia, evidenziaCampione, pulisciTraccia, escapeHtml } from './ui/mappa.js';
 import { renderProfilo, evidenziaProfilo } from './ui/profilo.js';
 import { renderTabella, evidenziaRiga, descriviWmo } from './ui/tabella.js';
 import { initImpostazioni } from './ui/impostazioni.js';
@@ -44,16 +44,27 @@ function pulisciMessaggi() {
 }
 
 // Pulizia dei pannelli risultato: mai numeri vecchi sotto etichette nuove
+// (anche mappa e traccia, non solo i pannelli di testo)
 function pulisciRisultato() {
   $('riepilogo').hidden = true;
   $('profilo').hidden = true;
   $('tabella').hidden = true;
+  $('sezione-risultato').hidden = true;
+  pulisciTraccia();
 }
 
+// Spinner a contatore: più operazioni sovrapposte (carico un GPX mentre
+// una previsione è in corso) non si spengono lo spinner a vicenda
+let operazioniAttive = 0;
 function caricamento(attivo) {
-  $('caricamento').hidden = !attivo;
-  $('bottone-prevedi').disabled = attivo || !percorsoCorrente;
+  operazioniAttive = Math.max(0, operazioniAttive + (attivo ? 1 : -1));
+  $('caricamento').hidden = operazioniAttive === 0;
+  $('bottone-prevedi').disabled = operazioniAttive > 0 || !percorsoCorrente;
 }
+
+// Contatore delle richieste di ingestione: su caricamenti sovrapposti
+// vince l'ULTIMO click dell'utente, non l'ultima risposta arrivata
+let richiestaIngest = 0;
 
 // ── Ingestione percorso ─────────────────────────────────────────────────
 
@@ -74,7 +85,7 @@ function impostaPercorso(percorso, vocaCronologia = null) {
       <span class="dato">${percorso.punti.length}<small>punti</small></span>
     </div>`;
   box.hidden = false;
-  $('bottone-prevedi').disabled = false;
+  $('bottone-prevedi').disabled = operazioniAttive > 0;
   if (vocaCronologia) {
     storage.cronologiaAggiungi(vocaCronologia);
     renderCronologia();
@@ -100,16 +111,18 @@ async function caricaKomoot() {
   pulisciMessaggi();
   const input = $('campo-komoot').value.trim();
   if (!input) return mostraMessaggio('info', 'Inserisci il link del profilo o di un tour Komoot.');
+  const mia = ++richiestaIngest;
   caricamento(true);
   try {
     const tourId = estraiTourId(input);
     if (tourId) {
-      await caricaTourKomoot(tourId);
+      await caricaTourKomoot(tourId, mia);
       return;
     }
     const userId = estraiUserId(input);
     if (!userId) throw new Error('Link non riconosciuto: serve un profilo o un tour Komoot');
     const tours = await elencaTourPianificati(userId);
+    if (mia !== richiestaIngest) return; // l'utente ha già chiesto altro
     const lista = $('lista-tour');
     if (!tours.length) {
       lista.hidden = true;
@@ -126,8 +139,16 @@ async function caricaKomoot() {
       b.innerHTML = `<span>${escapeHtml(t.nome)}</span><small>${t.km ?? '–'} km · +${t.dPlusM ?? '–'} m</small>`;
       b.addEventListener('click', () => {
         lista.hidden = true;
+        const miaClick = ++richiestaIngest;
         caricamento(true);
-        caricaTourKomoot(t.id).finally(() => caricamento(false));
+        caricaTourKomoot(t.id, miaClick)
+          .catch((e) =>
+            mostraMessaggio(
+              'errore',
+              `Komoot non risponde come previsto: ${e.message}. In alternativa carica il GPX.`
+            )
+          )
+          .finally(() => caricamento(false));
       });
       lista.appendChild(b);
     }
@@ -139,11 +160,12 @@ async function caricaKomoot() {
   }
 }
 
-async function caricaTourKomoot(tourId) {
+async function caricaTourKomoot(tourId, mia = null) {
   const [dettagli, items] = await Promise.all([
     dettagliTour(tourId).catch(() => ({ id: tourId, nome: `Tour ${tourId}` })),
     coordinateTour(tourId),
   ]);
+  if (mia !== null && mia !== richiestaIngest) return; // richiesta superata
   const percorso = percorsoDaKomoot(items, { nome: dettagli.nome });
   impostaPercorso(percorso, {
     id: `komoot:${tourId}`,
@@ -158,9 +180,11 @@ async function caricaOa(urlForzato = null) {
   pulisciMessaggi();
   const url = urlForzato || $('campo-oa').value.trim();
   if (!url) return mostraMessaggio('info', 'Incolla il link del percorso Outdooractive.');
+  const mia = ++richiestaIngest;
   caricamento(true);
   try {
     const testo = await scaricaGpxOa(url);
+    if (mia !== richiestaIngest) return; // richiesta superata
     const percorso = percorsoDaGpx(testo, { fonte: 'outdooractive' });
     impostaPercorso(percorso, {
       id: `oa:${estraiIdOa(url)}`,
@@ -179,8 +203,10 @@ async function caricaOa(urlForzato = null) {
 function caricaGpx(file) {
   pulisciMessaggi();
   if (!file) return;
+  const mia = ++richiestaIngest;
   const lettore = new FileReader();
   lettore.onload = () => {
+    if (mia !== richiestaIngest) return; // richiesta superata
     try {
       const percorso = percorsoDaGpx(String(lettore.result), {
         nomeFallback: file.name.replace(/\.gpx$/i, ''),
@@ -215,13 +241,14 @@ function renderCronologia() {
     b.innerHTML = `${escapeHtml(v.nome || 'percorso')} <small>${v.km ?? ''} km · ${escapeHtml(v.fonte)}</small>`;
     b.addEventListener('click', async () => {
       pulisciMessaggi();
+      const mia = ++richiestaIngest;
       caricamento(true);
       try {
-        if (v.fonte === 'komoot') await caricaTourKomoot(v.payload.tourId);
+        if (v.fonte === 'komoot') await caricaTourKomoot(v.payload.tourId, mia);
         else if (v.fonte === 'outdooractive') await caricaOa(v.payload.url);
         else {
           const percorso = costruisciPercorso({ nome: v.nome, fonte: 'gpx', punti: v.payload.punti });
-          impostaPercorso(percorso);
+          if (mia === richiestaIngest) impostaPercorso(percorso);
         }
       } catch (e) {
         mostraMessaggio('errore', e.message);
@@ -252,7 +279,7 @@ async function prevedi() {
     if (epoca !== epocaCorrente) return;
     mostraMessaggio('errore', e.messaggioUtente || e.message || 'Errore imprevisto');
   } finally {
-    if (epoca === epocaCorrente) caricamento(false);
+    caricamento(false);
   }
 }
 
@@ -309,9 +336,10 @@ async function calcolaPrevisione(percorsoIn) {
   );
   const arrivo = orari[orari.length - 1];
 
-  // Limite duro del calendario Open-Meteo: oggi+15 UTC (oltre: HTTP 400)
+  // Limite duro del calendario Open-Meteo: il giorno oggi+15 UTC è
+  // l'ULTIMO utilizzabile (oltre: HTTP 400) → limite a fine giornata
   const limiteApiMs =
-    Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00Z') + 15 * 86400000;
+    Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00Z') + 16 * 86400000 - 1;
   if (arrivo.getTime() > limiteApiMs) {
     throw new Error('Gita oltre i 15 giorni: nessun modello arriva così lontano');
   }
@@ -342,12 +370,15 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
       : Promise.resolve(null),
     ensemblePrecipitazione({ campioni, orari, ...finestra }),
+    // Quota VERA delle celle: la risposta con elevation esplicito fa solo
+    // eco del valore inviato, serve la chiamata dedicata
+    quoteCelle(campioni, scelta.primario),
   ]);
 
   // 7. Degradazioni esplicite, mai silenziose
@@ -383,8 +414,29 @@ async function calcolaPrevisione(percorsoIn) {
   const ens = ensEsito.status === 'fulfilled' ? ensEsito.value : null;
   if (!ens) avvisi.push('Ensemble non disponibile: niente forbice di probabilità');
 
-  if (!quindici) {
+  // Quote celle: valide solo se il modello usato è rimasto il primario
+  const quotaCelleArr =
+    modelloUsato.id === scelta.primario.id && celleEsito.status === 'fulfilled'
+      ? celleEsito.value
+      : null;
+
+  // Il dettaglio a 15 minuti arriva SOLO dalla chiamata ICON-D2,
+  // qualunque ruolo abbia (primario o secondario)
+  const d2Res =
+    modelloUsato.id === 'icon_d2'
+      ? prim
+      : scelta.secondario?.id === 'icon_d2' &&
+          secEsito.status === 'fulfilled' &&
+          secEsito.value
+        ? secEsito.value
+        : null;
+  const motivo15 = motivoNiente15Min(bbox, leadOreMax);
+  if (motivo15 === 'area') {
     avvisi.push('Dettaglio a 15 minuti non nativo in quest’area (resta il dato orario)');
+  } else if (motivo15 === 'orizzonte') {
+    avvisi.push('Dettaglio a 15 minuti oltre le 48 ore del suo modello (resta il dato orario)');
+  } else if (!d2Res) {
+    avvisi.push('Dettaglio a 15 minuti non disponibile (chiamata ICON-D2 fallita)');
   }
 
   // 8. Assemblaggio per campione
@@ -396,9 +448,15 @@ async function calcolaPrevisione(percorsoIn) {
     const p = prim.perCampione[i];
     const valori = p?.valori || {};
     const percepitaC = percepita(valori);
-    const canali = p ? scoreCanali(valori, percepitaC) : {};
-    const score = p ? fusione(canali) : 0;
     const ensI = ens?.perCampione?.[i] || null;
+    // ICON-2I in Appennino non ha probabilità di precipitazione: per il
+    // canale pioggia vale la PoP k/N dell'ensemble
+    const valoriRischio =
+      !Number.isFinite(valori.precipitation_probability) && Number.isFinite(ensI?.popKN)
+        ? { ...valori, precipitation_probability: ensI.popKN }
+        : valori;
+    const canali = p ? scoreCanali(valoriRischio, percepitaC) : {};
+    const score = p ? fusione(canali) : 0;
 
     const vSec = sec?.perCampione?.[i]?.valori;
     const diffTempC =
@@ -416,11 +474,12 @@ async function calcolaPrevisione(percorsoIn) {
       leadGiorni: (orari[i].getTime() - Date.now()) / 86400000,
     });
 
+    const quotaCella = quotaCelleArr?.[i] ?? null;
     if (
       p &&
-      Number.isFinite(p.quotaCella) &&
+      Number.isFinite(quotaCella) &&
       Number.isFinite(c.eleM) &&
-      Math.abs(p.quotaCella - c.eleM) > SOGLIA_DELTA_QUOTA_M
+      Math.abs(quotaCella - c.eleM) > SOGLIA_DELTA_QUOTA_M
     ) {
       trattiQuotaLontana++;
     }
@@ -463,8 +522,8 @@ async function calcolaPrevisione(percorsoIn) {
       score,
       ens: ensI,
       aff: { ...aff, etichetta: etichettaAffidabilita(aff.pct) },
-      quotaCella: p?.quotaCella ?? null,
-      precip15Max: p?.precip15Max ?? null,
+      quotaCella,
+      precip15Max: p?.precip15Max ?? d2Res?.perCampione?.[i]?.precip15Max ?? null,
       fontePercepita: FONTE_PERCEPITA,
       senzaDati: !p,
     });
@@ -607,9 +666,11 @@ function mostraUltimo() {
 function init() {
   const imp = storage.impostazioni();
 
-  // Data default: domani
+  // Data default: domani nel giorno LOCALE (con toISOString, tra
+  // mezzanotte e le 2 il fuso italiano proporrebbe oggi)
   const domani = new Date(Date.now() + 86400000);
-  $('campo-data').value = domani.toISOString().slice(0, 10);
+  const p2 = (x) => String(x).padStart(2, '0');
+  $('campo-data').value = `${domani.getFullYear()}-${p2(domani.getMonth() + 1)}-${p2(domani.getDate())}`;
   $('campo-pause').value = String(imp.pausaMinOra);
 
   // Select del passo dai valori di config
@@ -627,7 +688,25 @@ function init() {
 
   $('bottone-komoot').addEventListener('click', caricaKomoot);
   $('bottone-oa').addEventListener('click', () => caricaOa());
-  $('campo-gpx').addEventListener('change', (e) => caricaGpx(e.target.files?.[0]));
+  $('campo-gpx').addEventListener('change', (e) => {
+    caricaGpx(e.target.files?.[0]);
+    // Reset: senza, riselezionare lo STESSO file non genera l'evento
+    e.target.value = '';
+  });
+
+  // Invio nei campi link deve caricare il percorso, non lanciare Prevedi
+  // sul percorso precedente (implicit submission del form)
+  for (const [campo, azione] of [
+    [$('campo-komoot'), caricaKomoot],
+    [$('campo-oa'), () => caricaOa()],
+  ]) {
+    campo.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        azione();
+      }
+    });
+  }
 
   $('form-percorso').addEventListener('submit', (e) => {
     e.preventDefault();
