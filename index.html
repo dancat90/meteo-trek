@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meteo Trek — meteo lungo il tuo percorso</title>
+  <meta name="description" content="Carica un percorso di trekking (Komoot, Outdooractive o GPX) e vedi il meteo previsto tratto per tratto all'orario in cui ci passerai.">
+  <meta name="theme-color" content="#0d1117">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="./css/stile.css">
+</head>
+<body>
+  <header class="testata">
+    <h1>Meteo Trek</h1>
+    <button id="bottone-impostazioni" type="button" aria-label="Impostazioni" title="Impostazioni">⚙</button>
+  </header>
+
+  <main>
+    <form id="form-percorso" autocomplete="off">
+      <div class="schede" role="tablist">
+        <label class="scheda"><input type="radio" name="sorgente" value="komoot" checked> Komoot</label>
+        <label class="scheda"><input type="radio" name="sorgente" value="oa"> Outdooractive</label>
+        <label class="scheda"><input type="radio" name="sorgente" value="gpx"> File GPX</label>
+      </div>
+
+      <div id="pannello-komoot" class="pannello-sorgente">
+        <label>Profilo, username o link di un tour Komoot
+          <input id="campo-komoot" type="text" spellcheck="false"
+                 placeholder="es. www.komoot.com/user/12345 oppure link del tour">
+        </label>
+        <div class="riga-azioni">
+          <button id="bottone-komoot" type="button">Carica dai tour pubblici</button>
+        </div>
+        <div id="lista-tour" class="lista-tour" hidden></div>
+        <p class="nota">Vale solo per i tour pianificati <strong>pubblici</strong>.
+          Se un tour è privato, rendilo pubblico su Komoot oppure usa il file GPX.</p>
+      </div>
+
+      <div id="pannello-oa" class="pannello-sorgente" hidden>
+        <label>Link del percorso Outdooractive
+          <input id="campo-oa" type="url" spellcheck="false"
+                 placeholder="https://www.outdooractive.com/it/route/...">
+        </label>
+        <div class="riga-azioni">
+          <button id="bottone-oa" type="button">Scarica percorso</button>
+        </div>
+        <p class="nota">Funziona coi percorsi pubblicati. Se il sito nega il
+          download, esporta il GPX da Outdooractive e caricalo nella scheda File GPX.</p>
+      </div>
+
+      <div id="pannello-gpx" class="pannello-sorgente" hidden>
+        <label>File GPX (da qualunque app: Komoot, Outdooractive, Garmin, Strava…)
+          <input id="campo-gpx" type="file" accept=".gpx,application/gpx+xml">
+        </label>
+      </div>
+
+      <div id="cronologia" class="cronologia" hidden></div>
+
+      <div id="percorso-caricato" class="pannello" hidden></div>
+
+      <div class="griglia-form">
+        <label>Data
+          <input id="campo-data" type="date" required>
+        </label>
+        <label>Ora di partenza
+          <input id="campo-ora" type="time" value="08:00" required>
+        </label>
+        <label>Passo in salita
+          <select id="campo-passo"></select>
+        </label>
+        <label>Pause <small>(min/ora)</small>
+          <input id="campo-pause" type="number" min="0" max="30" step="5" value="10">
+        </label>
+        <label>Sosta pranzo <small>(min, 0 = no)</small>
+          <input id="campo-sosta" type="number" min="0" max="180" step="15" value="0">
+        </label>
+        <label>Sosta dopo <small>(ore)</small>
+          <input id="campo-sosta-dopo" type="number" min="0.5" max="10" step="0.5" value="3">
+        </label>
+      </div>
+
+      <div class="riga-azioni">
+        <button id="bottone-prevedi" type="submit" class="primario" disabled>Prevedi</button>
+        <button id="bottone-ultimo" type="button" hidden>Ultimo risultato</button>
+        <span id="caricamento" hidden aria-live="polite">Recupero dati…</span>
+      </div>
+    </form>
+
+    <div id="messaggi" role="status" aria-live="polite"></div>
+
+    <section id="sezione-risultato" hidden>
+      <div id="riepilogo" class="pannello" hidden></div>
+      <div id="mappa" aria-label="Mappa del percorso col rischio meteo per tratto"></div>
+      <div id="profilo" class="pannello-profilo" hidden></div>
+      <div id="tabella" hidden></div>
+    </section>
+  </main>
+
+  <footer class="pie-pagina">
+    <p><strong>Stima hobbistica</strong>: non sostituisce i bollettini
+      ufficiali né la valutazione in loco. In montagna il meteo cambia più
+      in fretta dei modelli: controlla sempre il cielo.</p>
+    <p>Meteo © <a href="https://open-meteo.com/">Open-Meteo.com</a> (CC-BY 4.0;
+      modelli DWD ICON, MeteoSwiss ICON-CH, ItaliaMeteo/ARPAE ICON-2I, ECMWF) ·
+      Mappa © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> /
+      <a href="https://opentopomap.org/">OpenTopoMap</a> (CC-BY-SA) ·
+      Tempi di marcia: funzione di Tobler riscalata sulla scala
+      Schweizer Wanderwege (compatibile CAI)</p>
+  </footer>
+
+  <dialog id="dialogo-impostazioni"></dialog>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

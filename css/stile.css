@@ -1,0 +1,252 @@
+/* ──────────────────────────────────────────────────────────────────────
+   Meteo Trek — tema scuro coerente con meteo-rotta (#0d1117).
+   Mobile-first: si usa sul telefono in montagna. Il colore di rischio
+   sta solo nei chip, nella polyline e nel profilo (mai testo colorato).
+   ────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --sfondo: #0d1117;
+  --pannello: #161b22;
+  --pannello-alto: #1c2129;
+  --testo: #c9d1d9;
+  --testo-secondario: #8b949e;
+  --bordo: #30363d;
+  --accento: #58a6ff;
+  --errore: #f85149;
+  --avviso: #d29922;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--sfondo);
+  color: var(--testo);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+main { max-width: 860px; margin: 0 auto; padding: 0 12px 24px; }
+
+a { color: var(--accento); }
+
+/* ── Testata ── */
+.testata {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 14px 12px 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.testata h1 { font-size: 1.25rem; margin: 0; letter-spacing: 0.02em; }
+.testata button {
+  background: none;
+  border: 1px solid var(--bordo);
+  border-radius: 8px;
+  color: var(--testo);
+  font-size: 1.1rem;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+/* ── Schede sorgente ── */
+.schede { display: flex; gap: 6px; margin-bottom: 10px; }
+.scheda {
+  flex: 1;
+  text-align: center;
+  background: var(--pannello);
+  border: 1px solid var(--bordo);
+  border-radius: 8px;
+  padding: 8px 6px;
+  font-size: 0.9rem;
+  color: var(--testo-secondario);
+  cursor: pointer;
+}
+.scheda:has(input:checked) {
+  border-color: var(--accento);
+  color: var(--testo);
+  background: var(--pannello-alto);
+}
+.scheda input { display: none; }
+.pannello-sorgente { margin-bottom: 10px; }
+
+/* ── Form ── */
+.griglia-form {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+@media (max-width: 560px) {
+  .griglia-form { grid-template-columns: repeat(2, 1fr); }
+}
+label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--testo-secondario); }
+input, select {
+  background: var(--pannello);
+  border: 1px solid var(--bordo);
+  border-radius: 8px;
+  color: var(--testo);
+  padding: 9px 10px;
+  font-size: 1rem;
+  width: 100%;
+}
+input[type="file"] { padding: 7px; font-size: 0.85rem; }
+input:focus, select:focus { outline: 2px solid var(--accento); outline-offset: 0; }
+
+.riga-azioni { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+button {
+  background: var(--pannello);
+  color: var(--testo);
+  border: 1px solid var(--bordo);
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+button.primario { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+#caricamento { color: var(--testo-secondario); font-size: 0.9rem; }
+
+.nota { color: var(--testo-secondario); font-size: 0.85rem; margin: 8px 0 4px; }
+
+/* ── Lista tour Komoot e cronologia ── */
+.lista-tour:not([hidden]) { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.lista-tour button { text-align: left; display: flex; justify-content: space-between; gap: 10px; }
+.lista-tour button small { color: var(--testo-secondario); white-space: nowrap; }
+.cronologia:not([hidden]) { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.cronologia button {
+  padding: 4px 11px;
+  font-size: 0.85rem;
+  color: var(--testo-secondario);
+}
+.cronologia button small { font-size: 0.7rem; opacity: 0.8; }
+
+/* ── Messaggi ── */
+.messaggio { border-radius: 8px; padding: 9px 12px; margin: 10px 0; font-size: 0.92rem; }
+.messaggio.info   { background: var(--pannello); border: 1px solid var(--bordo); }
+.messaggio.avviso { background: #2d2308; border: 1px solid #5a4a12; }
+.messaggio.errore { background: #3d1418; border: 1px solid #6e2126; }
+
+/* ── Pannelli ── */
+.pannello {
+  background: var(--pannello);
+  border: 1px solid var(--bordo);
+  border-radius: 12px;
+  padding: 14px;
+  margin: 14px 0;
+}
+.titolo-percorso { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.titolo-percorso .nome { font-size: 1.15rem; font-weight: 700; }
+.titolo-percorso .fonte { color: var(--testo-secondario); font-size: 0.8rem; }
+.dati-percorso { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 0.95rem; }
+.dati-percorso .dato small { display: block; color: var(--testo-secondario); font-size: 0.75rem; }
+.avvisi { color: var(--avviso); font-size: 0.85rem; margin-top: 10px; }
+.avvisi div { margin-top: 3px; }
+.meta-riepilogo { color: var(--testo-secondario); font-size: 0.82rem; margin-top: 10px; }
+
+/* ── Mappa ── */
+#mappa {
+  height: 44vh;
+  min-height: 280px;
+  border-radius: 12px;
+  border: 1px solid var(--bordo);
+  background: var(--pannello);
+}
+.legenda-mappa {
+  background: rgba(13, 17, 23, 0.88);
+  border: 1px solid var(--bordo);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--testo);
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.voce-legenda { display: flex; align-items: center; gap: 6px; }
+.chip {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex: none;
+}
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: var(--pannello-alto);
+  color: var(--testo);
+}
+.popup-punto { font-size: 0.85rem; }
+.popup-punto .chip { width: 9px; height: 9px; }
+
+/* ── Profilo altimetrico ── */
+.pannello-profilo {
+  background: var(--pannello);
+  border: 1px solid var(--bordo);
+  border-radius: 12px;
+  padding: 8px 10px 4px;
+  margin: 14px 0;
+}
+.pannello-profilo svg { display: block; width: 100%; height: auto; }
+.profilo-tacca { fill: var(--testo-secondario); font-size: 10px; }
+.profilo-asse { stroke: var(--bordo); stroke-width: 1; }
+
+/* ── Tabella per tratto ── */
+.contenitore-tabella { overflow-x: auto; margin: 14px 0; border: 1px solid var(--bordo); border-radius: 12px; }
+table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 0.85rem; }
+.tratti th, .tratti td {
+  padding: 7px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--bordo);
+  white-space: nowrap;
+}
+.tratti th { background: var(--pannello-alto); color: var(--testo-secondario); font-weight: 600; position: sticky; top: 0; }
+.tratti th:first-child, .tratti td:first-child {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--pannello);
+  z-index: 1;
+}
+.tratti th:first-child { background: var(--pannello-alto); z-index: 2; }
+.tratti tbody tr.riga-dati { cursor: pointer; }
+.tratti tbody tr.riga-dati:hover td { background: var(--pannello-alto); }
+.tratti tbody tr.selezionata td { background: #1b2a41 !important; }
+.tratti .cella-rischio { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.riga-dettagli td {
+  text-align: left;
+  white-space: normal;
+  color: var(--testo-secondario);
+  font-size: 0.8rem;
+  background: var(--pannello-alto);
+}
+.forbice { color: var(--testo-secondario); font-size: 0.75rem; }
+.neve { color: var(--accento); }
+
+/* ── Impostazioni ── */
+dialog {
+  background: var(--pannello);
+  color: var(--testo);
+  border: 1px solid var(--bordo);
+  border-radius: 12px;
+  max-width: 430px;
+  width: calc(100vw - 40px);
+  padding: 18px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.form-impostazioni { display: flex; flex-direction: column; gap: 14px; }
+.form-impostazioni h2 { margin: 0; font-size: 1.1rem; }
+.form-impostazioni small { color: var(--testo-secondario); font-size: 0.78rem; }
+.riga-bottoni { display: flex; justify-content: space-between; gap: 10px; }
+.versione { color: var(--testo-secondario); text-align: right; }
+
+/* ── Piè di pagina ── */
+.pie-pagina {
+  max-width: 860px;
+  margin: 18px auto 0;
+  padding: 12px 12px 28px;
+  border-top: 1px solid var(--bordo);
+  color: var(--testo-secondario);
+  font-size: 0.78rem;
+}

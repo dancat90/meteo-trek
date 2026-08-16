@@ -1,0 +1,26 @@
+{
+  "name": "Meteo Trek",
+  "short_name": "MeteoTrek",
+  "description": "Meteo previsto tratto per tratto lungo il tuo percorso di trekking, all'orario in cui ci passerai",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
