@@ -10,6 +10,17 @@
 // convettive, indicativa per quelle stratificate: dichiarata in UI.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { SOGLIE_SOLE, ETICHETTE_SOLE } from './config.js';
+
+// Intensità solare qualitativa dalla radiazione globale al suolo:
+// il filtro delle nubi è già dentro il valore previsto dal modello
+export function intensitaSolare(wm2) {
+  if (!Number.isFinite(wm2)) return null;
+  let livello = 0;
+  while (livello < SOGLIE_SOLE.length && wm2 >= SOGLIE_SOLE[livello]) livello++;
+  return { livello, etichetta: ETICHETTE_SOLE[livello] };
+}
+
 // Punto di rugiada [°C] da temperatura e umidità relativa (Magnus)
 export function puntoRugiada(tC, rh) {
   if (!Number.isFinite(tC) || !Number.isFinite(rh) || rh <= 0) return null;

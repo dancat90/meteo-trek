@@ -253,5 +253,11 @@ export const API = {
 // Stima copertura mobile: distanza (km) dalla cella Vodafone più vicina
 export const SOGLIE_COPERTURA = { probabileKm: 2, incertaKm: 6 };
 
+// Intensità solare qualitativa dalla radiazione globale al suolo (W/m²,
+// già filtrata dalle nubi previste dal modello). Riferimenti: mezzogiorno
+// estivo sereno ~850-1000, invernale sereno ~400-500, coperto ~50-150.
+export const SOGLIE_SOLE = [10, 150, 400, 700];
+export const ETICHETTE_SOLE = ['nulla', 'scarsa', 'media', 'forte', 'molto forte'];
+
 // Ensemble per la probabilità di precipitazione: primario e fallback
 export const MODELLI_ENSEMBLE = ['icon_seamless', 'ecmwf_ifs025'];

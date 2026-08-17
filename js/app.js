@@ -246,6 +246,8 @@ function renderCronologia() {
   }
   box.innerHTML = '';
   for (const v of voci) {
+    const riga = document.createElement('div');
+    riga.className = 'voce-cronologia';
     const b = document.createElement('button');
     b.type = 'button';
     b.innerHTML = `${escapeHtml(v.nome || 'percorso')} <small>${v.km ?? ''} km · ${escapeHtml(v.fonte)}</small>`;
@@ -266,7 +268,21 @@ function renderCronologia() {
         caricamento(false);
       }
     });
-    box.appendChild(b);
+    // Rimozione della singola voce, senza caricare il percorso
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'rimuovi-voce';
+    x.textContent = '×';
+    x.title = 'Rimuovi dai recenti';
+    x.setAttribute('aria-label', `Rimuovi ${v.nome || 'percorso'} dai recenti`);
+    x.addEventListener('click', (e) => {
+      e.stopPropagation();
+      storage.cronologiaRimuovi(v.id);
+      renderCronologia();
+    });
+    riga.appendChild(b);
+    riga.appendChild(x);
+    box.appendChild(riga);
   }
   box.hidden = false;
 }

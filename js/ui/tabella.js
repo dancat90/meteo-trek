@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { COLORI_SEVERITA, ETICHETTE_RISCHIO } from '../config.js';
+import { intensitaSolare } from '../nuvole.js';
 import { escapeHtml } from './mappa.js';
 
 // Descrizioni italiane dei weather code WMO
@@ -74,7 +75,7 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
     <tr>
       <th>km</th><th>ora</th><th>quota</th><th>T</th><th>perc.</th>
       <th>vento<br>${uVento}</th><th>raffiche<br>${uVento}</th><th>umid.</th>
-      <th>sole<br>W/m²</th><th>nuvole<br>base</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
+      <th>sole</th><th>nuvole<br>base</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
     </tr>`;
 
   const righe = campioni
@@ -122,7 +123,7 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
           <td>${vFmt(v.wind_speed_10m)}</td>
           <td>${vFmt(v.wind_gusts_10m)}</td>
           <td>${num(v.relative_humidity_2m, 0, '%')}</td>
-          <td>${num(v.shortwave_radiation, 0)}</td>
+          <td>${intensitaSolare(v.shortwave_radiation)?.etichetta ?? '–'}</td>
           <td>${cellaNuvole(c.nuvole)}</td>
           <td>${pop}</td>
           <td>${mm}</td>
@@ -163,6 +164,8 @@ function righeDettaglio(c, vFmt, uVento) {
     }
     parti.push(`nuvolosità ${Math.round(v.cloud_cover)}%${nb}`);
   }
+  if (Number.isFinite(v.shortwave_radiation))
+    parti.push(`sole ${Math.round(v.shortwave_radiation)} W/m²`);
   if (Number.isFinite(v.uv_index)) parti.push(`UV ${v.uv_index.toFixed(1)}`);
   if (Number.isFinite(v.wind_direction_10m))
     parti.push(`vento da ${Math.round(v.wind_direction_10m)}°`);

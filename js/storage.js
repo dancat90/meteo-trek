@@ -94,6 +94,10 @@ export function cronologiaAggiungi(voce) {
   scrivi('mt:cronologia', [voce, ...rimanenti].slice(0, MAX_CRONOLOGIA));
 }
 
+export function cronologiaRimuovi(id) {
+  scrivi('mt:cronologia', cronologiaLeggi().filter((v) => v.id !== id));
+}
+
 export function cronologiaSvuota() {
   rimuovi('mt:cronologia');
 }

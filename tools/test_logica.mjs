@@ -45,7 +45,8 @@ import { percepita, utciDaValori } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
 import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
 import { puntiSonda, abbinaRegole } from '../js/api/areeprotette.js';
-import { puntoRugiada, baseNuvolosa } from '../js/nuvole.js';
+import { puntoRugiada, baseNuvolosa, intensitaSolare } from '../js/nuvole.js';
+import { cronologiaAggiungi, cronologiaLeggi, cronologiaRimuovi, cronologiaSvuota } from '../js/storage.js';
 import { estraiTour, estraiTourId } from '../js/api/komoot.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -571,6 +572,30 @@ console.log('── Nuvole (base nuvolosa) ──');
   test('stima LCL ≈ quota + 125·spread', stima.stima === true && vicino(stima.baseM, 2680, 40), String(stima.baseM));
   const saturo = baseNuvolosa({ baseModelloM: null, tC: 8, rh: 100, quotaM: 1500, coperturaPct: 100 });
   test('aria satura → base alla quota (nebbia)', vicino(saturo.baseM, 1500, 5), String(saturo.baseM));
+
+  // Intensità solare qualitativa: bordi esatti delle soglie
+  test('sole 9 → nulla', intensitaSolare(9).etichetta === 'nulla');
+  test('sole 10 → scarsa', intensitaSolare(10).etichetta === 'scarsa');
+  test('sole 150 → media', intensitaSolare(150).etichetta === 'media');
+  test('sole 400 → forte', intensitaSolare(400).etichetta === 'forte');
+  test('sole 700 → molto forte', intensitaSolare(700).etichetta === 'molto forte');
+  test('sole 950 → molto forte', intensitaSolare(950).livello === 4);
+  test('sole senza dato → null', intensitaSolare(null) === null);
+}
+
+console.log('── Cronologia (rimozione voce) ──');
+{
+  cronologiaSvuota();
+  cronologiaAggiungi({ id: 'a', fonte: 'gpx', nome: 'Alfa' });
+  cronologiaAggiungi({ id: 'b', fonte: 'komoot', nome: 'Beta' });
+  cronologiaAggiungi({ id: 'c', fonte: 'gpx', nome: 'Gamma' });
+  cronologiaRimuovi('b');
+  const voci = cronologiaLeggi();
+  test('la voce rimossa sparisce', !voci.some((v) => v.id === 'b'));
+  test('le altre restano (ordine invariato)', voci.map((v) => v.id).join(',') === 'c,a');
+  cronologiaRimuovi('inesistente');
+  test('rimozione di id inesistente innocua', cronologiaLeggi().length === 2);
+  cronologiaSvuota();
 }
 
 console.log('── Aree protette (regole cani) ──');

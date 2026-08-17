@@ -122,6 +122,15 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   color: var(--testo-secondario);
 }
 .cronologia button small { font-size: 0.7rem; opacity: 0.8; }
+/* Voce dei recenti: bottone di carico + «×» di rimozione affiancati */
+.voce-cronologia { display: flex; align-items: stretch; gap: 2px; }
+.voce-cronologia .rimuovi-voce {
+  padding: 4px 8px;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--testo-secondario);
+}
+.voce-cronologia .rimuovi-voce:hover { color: #da3633; }
 
 /* ── Messaggi ── */
 .messaggio { border-radius: 8px; padding: 9px 12px; margin: 10px 0; font-size: 0.92rem; }
