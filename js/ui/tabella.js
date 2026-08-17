@@ -145,6 +145,8 @@ function righeDettaglio(c, vFmt, uVento) {
     parti.push(
       'rischio da: ' + c.canaliAttivi.map((k) => `${k.nome} (${k.score})`).join(', ')
     );
+  if (c.windchill)
+    parti.push(`windchill ${Math.round(c.windchill.gradi)}° — ${c.windchill.etichetta}`);
   const perModello = (c.tPerModello || []).filter((m) => Number.isFinite(m.t));
   if (perModello.length > 1) {
     parti.push(

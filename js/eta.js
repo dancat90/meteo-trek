@@ -1,31 +1,57 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Motore dei tempi di percorrenza. Modulo puro, testabile in Node.
 //
-// Idea: la funzione di Tobler dà una velocità CONTINUA in funzione della
-// pendenza (il profilo relativo dei tempi tratto per tratto), ma i suoi
-// valori assoluti sono ottimisti in salita ripida. Il totale viene quindi
-// RISCALATO sul tempo "svizzero" (Schweizer Wanderwege: 4 km/h + 400 m/h
-// in salita + 800 m/h in discesa, la stessa scala dei cartelli CAI),
+// Dal 17/08/2026 il metro è il nomogramma ufficiale Schweizer Wanderwege
+// 1996 (vedi NOMOGRAMMA in config.js): per ogni segmento si combinano in
+// norma-q il tempo orizzontale (4,2 km/h, con spinta nelle discese dolci)
+// e il tempo verticale (400 m/h su, 800 m/h giù). Rispetto alla vecchia
+// regola additiva dei cartelli i tempi sulle pendenze dolci sono più
+// corti e realistici; sul ripido i due metodi coincidono. Il totale è
 // personalizzato sul passo dichiarato dall'utente (m/h di dislivello in
-// salita). Risultato: distribuzione realistica lungo il percorso E totale
-// coerente con la segnaletica.
+// salita): un camminatore lento è lento anche in piano e in discesa
+// (assunzione dichiarata nel README).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { BASE_SVIZZERA, GUARDIA_K, PENDENZA_MAX } from './config.js';
+import { BASE_SVIZZERA, NOMOGRAMMA, GUARDIA_K, PENDENZA_MAX } from './config.js';
 
-// Velocità di Tobler (km/h) alla pendenza m = dz/dx (rapporto, non gradi)
-export function velocitaTobler(m) {
-  return 6 * Math.exp(-3.5 * Math.abs(m + 0.05));
+// Velocità orizzontale (km/h) alla pendenza s = dz/dx: 4,2 in piano e in
+// salita (lì rallenta il termine verticale), con la spinta delle discese
+// dolci che il nomogramma mostra (a −6% si scende più veloci del piano)
+export function velocitaPianoKmh(s) {
+  const N = NOMOGRAMMA;
+  if (!(s < 0)) return N.vPianoKmh;
+  const bump = Math.exp(-(((s + N.discesaPicco) / N.discesaLarghezza) ** 2));
+  // La spinta si accende gradualmente sotto il piano: a s=0 vale zero
+  const rampa = Math.min(1, -s / 0.02);
+  return N.vPianoKmh * (1 + N.discesaSpinta * bump * rampa);
 }
 
-// Tempo totale svizzero personalizzato (minuti, pause escluse)
+// Tempo (minuti) del nomogramma per un segmento di dxKm orizzontali e
+// dhM di dislivello (segno incluso). Combinazione in norma-q: additiva
+// dove domina un termine solo, sub-additiva sulle pendenze dolci.
+export function tempoNomogrammaMin(dxKm, dhM) {
+  if (!(dxKm > 0)) {
+    return Math.abs(dhM) > 0
+      ? (dhM > 0 ? dhM / NOMOGRAMMA.salitaMOra : -dhM / NOMOGRAMMA.discesaMOra) * 60
+      : 0;
+  }
+  const s = dhM / (dxKm * 1000);
+  const tDist = (dxKm / velocitaPianoKmh(s)) * 60;
+  const tVert =
+    dhM >= 0
+      ? (dhM / NOMOGRAMMA.salitaMOra) * 60
+      : (-dhM / NOMOGRAMMA.discesaMOra) * 60;
+  const q = NOMOGRAMMA.q;
+  return Math.pow(Math.pow(tDist, q) + Math.pow(tVert, q), 1 / q);
+}
+
+// Tempo totale della vecchia regola additiva dei cartelli (minuti,
+// pause escluse): resta come riferimento prudente e per la guardia
 export function tempoSvizzeroMin(totKm, dPlusM, dMinusM, mhSalita) {
   const ore =
     totKm / BASE_SVIZZERA.kmOrari +
     dPlusM / BASE_SVIZZERA.salitaMOra +
     dMinusM / BASE_SVIZZERA.discesaMOra;
-  // Il fattore scala l'INTERO totale: un camminatore lento è lento anche
-  // in piano e in discesa (assunzione dichiarata nel README)
   return ore * (BASE_SVIZZERA.salitaMOra / mhSalita) * 60;
 }
 
@@ -36,37 +62,47 @@ export function tempoSvizzeroMin(totKm, dPlusM, dMinusM, mhSalita) {
 // opzioni:  { mhSalita, pausaMinOra, sosta: {dopoOre, durataMin} | null }
 //
 // Restituisce { tCumMin[], durataMovimentoMin, durataTotaleMin, k,
-//               tToblerMin, tSvizzeroMin, avvisi[] }
+//               tNomogrammaMin, tSvizzeroMin, avvisi[] }
+// dove k = tNomogramma / tSvizzeroAdditivo (guardia di sanità).
 export function calcolaEta(percorso, opzioni = {}) {
   const { mhSalita = 400, pausaMinOra = 10, sosta = null } = opzioni;
   const { punti, cum, totKm, dPlusM, dMinusM } = percorso;
   const avvisi = [];
 
-  // 1. Profilo Tobler per segmento (fra trackpoint consecutivi: la
-  //    pendenza vera vive a questa scala, non a quella dei campioni meteo)
-  const tCumTobler = [0];
-  let tTobler = 0;
+  // 1. Nomogramma per segmento (fra trackpoint consecutivi: la pendenza
+  //    vera vive a questa scala, non a quella dei campioni meteo)
+  const tCumNom = [0];
+  let tNom = 0;
   for (let i = 1; i < punti.length; i++) {
     const dxKm = cum[i] - cum[i - 1];
     if (dxKm <= 0) {
-      tCumTobler.push(tTobler);
+      tCumNom.push(tNom);
       continue;
     }
     const za = punti[i - 1].eleM;
     const zb = punti[i].eleM;
-    let m = 0;
+    let dhM = 0;
     if (za !== null && zb !== null) {
-      m = (zb - za) / (dxKm * 1000);
-      m = Math.max(-PENDENZA_MAX, Math.min(PENDENZA_MAX, m));
+      // Clamp della pendenza: oltre ±60% è quasi sempre rumore GPS o
+      // roccia attrezzata, dove nessuna tabella dei tempi ha senso
+      const s = Math.max(
+        -PENDENZA_MAX,
+        Math.min(PENDENZA_MAX, (zb - za) / (dxKm * 1000))
+      );
+      dhM = s * dxKm * 1000;
     }
-    tTobler += (dxKm / velocitaTobler(m)) * 60;
-    tCumTobler.push(tTobler);
+    tNom += tempoNomogrammaMin(dxKm, dhM);
+    tCumNom.push(tNom);
   }
-  if (tTobler <= 0) throw new Error('Percorso a lunghezza nulla');
+  if (tNom <= 0) throw new Error('Percorso a lunghezza nulla');
 
-  // 2. Riscalatura sul totale svizzero personalizzato
+  // 2. Personalizzazione sul passo (fattore sull'intero totale)
+  const fPasso = NOMOGRAMMA.salitaMOra / mhSalita;
+
+  // 3. Guardia di sanità: il nomogramma contro la regola additiva.
+  //    Il rapporto non dipende dal passo (il fattore agisce su entrambi).
   const tSviz = tempoSvizzeroMin(totKm, dPlusM, dMinusM, mhSalita);
-  const k = tSviz / tTobler;
+  const k = (tNom * fPasso) / tSviz;
   if (k < GUARDIA_K[0] || k > GUARDIA_K[1]) {
     avvisi.push(
       `Profilo tempi anomalo (fattore ${k.toFixed(2)}): quote o distanze ` +
@@ -74,13 +110,13 @@ export function calcolaEta(percorso, opzioni = {}) {
     );
   }
 
-  // 3. Pause brevi spalmate (minuti per ora di marcia)
+  // 4. Pause brevi spalmate (minuti per ora di marcia)
   const fPause = 1 + Math.max(0, pausaMinOra) / 60;
 
-  let tCumMin = tCumTobler.map((t) => t * k * fPause);
-  const durataMovimentoMin = tTobler * k;
+  let tCumMin = tCumNom.map((t) => t * fPasso * fPause);
+  const durataMovimentoMin = tNom * fPasso;
 
-  // 4. Sosta puntuale (es. pranzo): slittamento additivo di tutti i punti
+  // 5. Sosta puntuale (es. pranzo): slittamento additivo di tutti i punti
   //    successivi al momento della sosta
   if (sosta && sosta.durataMin > 0) {
     const dopoMin = (sosta.dopoOre ?? 0) * 60;
@@ -92,7 +128,7 @@ export function calcolaEta(percorso, opzioni = {}) {
     durataMovimentoMin,
     durataTotaleMin: tCumMin[tCumMin.length - 1],
     k,
-    tToblerMin: tTobler,
+    tNomogrammaMin: tNom,
     tSvizzeroMin: tSviz,
     avvisi,
   };

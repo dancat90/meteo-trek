@@ -5,7 +5,7 @@
 // tile della mappa NON passano MAI dalla cache: devono essere fresche.
 // ─────────────────────────────────────────────────────────────────────────
 
-const CACHE = 'meteo-trek-v3';
+const CACHE = 'meteo-trek-v4';
 
 const CDN_LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
 
@@ -22,7 +22,12 @@ const ASSETS = [
   './js/percorso.js',
   './js/eta.js',
   './js/percepita.js',
+  './js/utci-poly.js',
+  './js/radiante.js',
+  './js/windchill.js',
   './js/dispersione.js',
+  './js/marcia.js',
+  './js/sole.js',
   './js/rischio.js',
   './js/affidabilita.js',
   './js/api/meteo.js',
@@ -32,6 +37,7 @@ const ASSETS = [
   './js/api/outdooractive.js',
   './js/ui/mappa.js',
   './js/ui/tabella.js',
+  './js/ui/marcia.js',
   './js/ui/profilo.js',
   './js/ui/impostazioni.js',
   './manifest.webmanifest',

@@ -13,10 +13,30 @@ export const ETICHETTE_RISCHIO = ['buono', 'attenzione', 'avverso', 'severo'];
 
 // ── Motore ETA ───────────────────────────────────────────────────────────
 
-// Base "svizzera" (Schweizer Wanderwege): 4 km/h in piano, 400 m/h di
-// dislivello in salita, 800 m/h in discesa, pause escluse. È la scala su
-// cui si riscala il profilo Tobler (vedi js/eta.js).
+// Base "svizzera" additiva (regola dei cartelli): 4 km/h in piano,
+// 400 m/h in salita, 800 m/h in discesa, pause escluse. Dal 17/08/2026
+// NON è più il metro dei tempi (vedi NOMOGRAMMA): resta come riferimento
+// prudente per la guardia di sanità e per il confronto.
 export const BASE_SVIZZERA = { kmOrari: 4, salitaMOra: 400, discesaMOra: 800 };
+
+// Nomogramma ufficiale Schweizer Wanderwege 1996 (fornito dall'utente,
+// stessa base della formula riservata usata da wandern.ch/SvizzeraMobile).
+// Il polinomio ufficiale non è pubblico: qui una combinazione in norma-q
+// dei tempi orizzontale e verticale, tarata sugli ancoraggi leggibili
+// del diagramma e validata nei test:
+//   piano 4,2 km/h · salita pura 400 m/h · discesa pura 800 m/h ·
+//   5 km +300 m ≈ 80 min (regola additiva: 116) ·
+//   5 km −300 m ≈ 62-65 min (più veloce del piano, come Tobler)
+export const NOMOGRAMMA = {
+  vPianoKmh: 4.2,
+  salitaMOra: 400,
+  discesaMOra: 800,
+  q: 2.5, // esponente della combinazione: q→∞ = max, q=1 = additiva
+  // Spinta di velocità nelle discese dolci (picco al 6-7% circa)
+  discesaSpinta: 0.15,
+  discesaPicco: 0.065,
+  discesaLarghezza: 0.05,
+};
 
 // Passi personali selezionabili: metri di dislivello orari in salita.
 // Il fattore di scala dell'intero itinerario è salitaMOra / passo.
@@ -27,9 +47,10 @@ export const PASSI = [
   { mOra: 600, etichetta: 'veloce (600 m/h)' },
 ];
 
-// Guardia sul fattore di riscalatura Tobler→svizzero: fuori da questo
-// intervallo la traccia ha quote o distanze sospette (avviso, non scarto)
-export const GUARDIA_K = [0.5, 2.5];
+// Guardia sul rapporto nomogramma / regola additiva: sui percorsi sani
+// sta fra ~0,55 (dolce) e ~1,0 (ripido). Fuori da questo intervallo la
+// traccia ha quote o distanze sospette (avviso, non scarto)
+export const GUARDIA_K = [0.45, 1.1];
 
 // Pause brevi spalmate (minuti per ora di marcia), default modificabile
 export const PAUSA_MIN_ORA_DEFAULT = 10;
@@ -147,6 +168,20 @@ export const VARIABILI_PRIMARIO = [
   'is_day',
   'uv_index',
   'cape',
+  // Ingressi radiativi per la MRT dell'UTCI (js/radiante.js)
+  'direct_radiation',
+  'direct_normal_irradiance',
+  'terrestrial_radiation',
+];
+
+// Ingressi minimi dell'UTCI per modello (fascia della percepita)
+const VARIABILI_UTCI = [
+  'relative_humidity_2m',
+  'cloud_cover',
+  'shortwave_radiation',
+  'direct_radiation',
+  'direct_normal_irradiance',
+  'terrestrial_radiation',
 ];
 
 // Variabili core del modello secondario (per la divergenza fra modelli)
@@ -156,10 +191,16 @@ export const VARIABILI_SECONDARIO = [
   'precipitation',
   'wind_speed_10m',
   'wind_gusts_10m',
+  ...VARIABILI_UTCI,
 ];
 
 // Variabili della chiamata ai modelli di confronto (fascia multi-modello)
-export const VARIABILI_CONFRONTO = ['temperature_2m', 'apparent_temperature'];
+export const VARIABILI_CONFRONTO = [
+  'temperature_2m',
+  'apparent_temperature',
+  'wind_speed_10m',
+  ...VARIABILI_UTCI,
+];
 
 // Dispersione min-max fra i modelli (°C) → accordo alto / medio / basso.
 // Colora la forbice di temperatura e percepita nella tabella.

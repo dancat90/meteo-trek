@@ -18,19 +18,47 @@ App: https://dancat90.github.io/meteo-trek/
 2. Imposta data, ora di partenza e il tuo passo (i metri di dislivello
    che sali in un'ora: 400 m/h è il riferimento dei cartelli CAI).
 3. Prevedi: tabella per tratto, mappa colorata per rischio, profilo
-   altimetrico con gli orari di passaggio.
+   altimetrico con gli orari di passaggio, tabella di marcia con punti
+   di controllo ogni 15 minuti (esportabile in PDF).
 
 L'ultima previsione resta consultabile offline (bottone «Ultimo
 risultato»): utile sul sentiero senza campo.
 
 ## Come stima i tempi
 
-Velocità continua in funzione della pendenza (funzione di Tobler),
-riscalata sul totale della scala escursionistica svizzera
-(4 km/h + 400 m/h in salita + 800 m/h in discesa, la stessa dei cartelli
-CAI) e calibrata sul passo personale. Assunzione dichiarata: il fattore
-personale scala l'intero itinerario, non solo le salite. Pause brevi
-spalmate + eventuale sosta pranzo.
+Nomogramma ufficiale Schweizer Wanderwege 1996 (lo stesso dietro i
+cartelli svizzeri e wandern.ch): per ogni segmento si combinano in
+norma-q il tempo orizzontale (4,2 km/h, con la spinta delle discese
+dolci) e quello verticale (400 m/h in salita, 800 m/h in discesa).
+Sulle pendenze dolci i tempi sono più corti della vecchia regola
+additiva dei cartelli CAI (5 km +300 m ≈ 1 h 20, non 1 h 56); sul
+ripido i due metodi coincidono. Il totale è calibrato sul passo
+personale. Assunzione dichiarata: il fattore personale scala l'intero
+itinerario, non solo le salite. Pause brevi spalmate + eventuale sosta
+pranzo.
+
+## Percepita, windchill, fascia multi-modello
+
+- **Percepita = UTCI** (polinomio ufficiale Bröde a0.002 su temperatura
+  media radiante alla Di Napoli, la catena di ECMWF/ERA5): integra
+  vento, umidità e sole. Se al modello mancano gli ingressi radiativi,
+  ripiego dichiarato sulla `apparent_temperature` di Open-Meteo.
+  Validazione: `node tools/valida_utci.mjs` (720 casi contro
+  pythermalcomfort, scarto zero nel dominio del modello).
+- **Windchill** (formula Environment Canada) nella riga di dettaglio nei
+  casi invernali (T ≤ 10 °C, vento ≥ 4,8 km/h), con la classe di rischio
+  congelamento della pelle esposta e avviso aggregato.
+- **Temperatura e percepita in fascia multi-modello**: mediana di 4
+  modelli con forbice min-max colorata per accordo (verde ≤2 °C, ambra
+  ≤4 °C, rosso oltre); i valori per modello sono nella riga di dettaglio.
+
+## Tabella di marcia
+
+Punti di controllo ogni 15 minuti di tabella (pause incluse): ora
+prevista, tempo e distanza parziali/totali, quota, pendenza media del
+tratto, meteo del punto. Bottone «Esporta PDF» (stampa del browser,
+funziona offline). Calcolo del tramonto sul punto di arrivo: se
+l'arrivo previsto è a meno di 1 ora dal tramonto scatta l'avviso.
 
 ## Modelli meteo
 
@@ -62,6 +90,7 @@ Dati meteo © [Open-Meteo.com](https://open-meteo.com/) (CC-BY 4.0).
 ## Sviluppo
 
 - Test della logica pura: `node tools/test_logica.mjs`
+- Validazione UTCI contro pythermalcomfort: `node tools/valida_utci.mjs`
 - Smoke test di rete: `node tools/smoke_meteo.mjs`
 - Icone: `python tools/genera_icone.py`
 - Deploy: GitHub Pages dal branch `main`. **A ogni deploy bumpare la

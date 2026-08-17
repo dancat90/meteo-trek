@@ -228,6 +228,17 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
 .forbice-ampia { color: #da3633; }
 .neve { color: var(--accento); }
 
+/* ── Tabella di marcia ── */
+.marcia { margin-top: 16px; }
+.marcia-testata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.marcia-testata button { margin-left: auto; }
+
 /* ── Impostazioni ── */
 dialog {
   background: var(--pannello);

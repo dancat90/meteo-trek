@@ -19,7 +19,12 @@ import { fascia, classeDispersione } from './dispersione.js';
 import { ensemblePrecipitazione } from './api/ensemble.js';
 import { estraiUserId, estraiTourId, elencaTourPianificati, coordinateTour, dettagliTour } from './api/komoot.js';
 import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
-import { percepita, FONTE_PERCEPITA } from './percepita.js';
+import { percepita, utciDaValori, FONTE_UTCI, FONTE_STEADMAN } from './percepita.js';
+import { giornoAnnoUtc } from './radiante.js';
+import { windchillC, classeCongelamento } from './windchill.js';
+import { puntiControllo } from './marcia.js';
+import { albaTramontoUtc } from './sole.js';
+import { renderMarcia } from './ui/marcia.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
 import { affidabilita, etichettaAffidabilita } from './affidabilita.js';
 import { initMappa, disegnaTraccia, evidenziaCampione, pulisciTraccia, escapeHtml } from './ui/mappa.js';
@@ -50,6 +55,7 @@ function pulisciRisultato() {
   $('riepilogo').hidden = true;
   $('profilo').hidden = true;
   $('tabella').hidden = true;
+  $('marcia').hidden = true;
   $('sezione-risultato').hidden = true;
   pulisciTraccia();
 }
@@ -464,12 +470,18 @@ async function calcolaPrevisione(percorsoIn) {
   // 8. Assemblaggio per campione
   const arricchiti = [];
   let trattiQuotaLontana = 0;
+  let trattiCongelamento = 0;
   let forbiceAmpia = false;
   for (let i = 0; i < campioni.length; i++) {
     const c = campioni[i];
     const p = prim.perCampione[i];
     const valori = p?.valori || {};
-    const percepitaC = percepita(valori);
+    const giorno = giornoAnnoUtc(orari[i]);
+    // Percepita titolare: UTCI se il modello ha gli ingressi radiativi,
+    // altrimenti Steadman (fonte dichiarata per campione)
+    const utciPrim = utciDaValori(valori, giorno);
+    const usaUtci = Number.isFinite(utciPrim);
+    const percepitaC = usaUtci ? utciPrim : percepita(valori, giorno);
     const ensI = ens?.perCampione?.[i] || null;
     // ICON-2I in Appennino non ha probabilità di precipitazione: per il
     // canale pioggia vale la PoP k/N dell'ensemble
@@ -485,6 +497,9 @@ async function calcolaPrevisione(percorsoIn) {
     // Fascia multi-modello di T e percepita: modello usato + secondario +
     // modelli di confronto, tutti già alla quota del sentiero
     const perModello = [];
+    // La fascia della percepita usa lo stesso metro del valore titolare:
+    // UTCI per modello quando il primario è in UTCI, Steadman altrimenti
+    const percDi = (v) => (usaUtci ? utciDaValori(v, giorno) : v?.apparent_temperature);
     if (p) {
       perModello.push({ nome: modelloUsato.nome, t: valori.temperature_2m, perc: percepitaC });
     }
@@ -492,12 +507,12 @@ async function calcolaPrevisione(percorsoIn) {
       perModello.push({
         nome: scelta.secondario.nome,
         t: vSec.temperature_2m,
-        perc: vSec.apparent_temperature,
+        perc: percDi(vSec),
       });
     }
     for (const r of conf) {
       const vc = r.perCampione?.[i]?.valori;
-      if (vc) perModello.push({ nome: r.modello.nome, t: vc.temperature_2m, perc: vc.apparent_temperature });
+      if (vc) perModello.push({ nome: r.modello.nome, t: vc.temperature_2m, perc: percDi(vc) });
     }
     const tFasciaBase = fascia(perModello.map((m) => m.t));
     const tFascia = tFasciaBase
@@ -526,6 +541,11 @@ async function calcolaPrevisione(percorsoIn) {
       diffRaffKmh,
       leadGiorni: (orari[i].getTime() - Date.now()) / 86400000,
     });
+
+    // Windchill (solo dominio invernale: T ≤ 10 °C e vento ≥ 4,8 km/h)
+    const wc = windchillC(valori.temperature_2m, valori.wind_speed_10m);
+    const congelamento = classeCongelamento(wc);
+    if (congelamento && congelamento.livello >= 1) trattiCongelamento++;
 
     const quotaCella = quotaCelleArr?.[i] ?? null;
     if (
@@ -580,7 +600,8 @@ async function calcolaPrevisione(percorsoIn) {
       aff: { ...aff, etichetta: etichettaAffidabilita(aff.pct) },
       quotaCella,
       precip15Max: p?.precip15Max ?? d2Res?.perCampione?.[i]?.precip15Max ?? null,
-      fontePercepita: FONTE_PERCEPITA,
+      windchill: wc == null ? null : { gradi: wc, ...congelamento },
+      fontePercepita: usaUtci ? FONTE_UTCI : FONTE_STEADMAN,
       senzaDati: !p,
     });
   }
@@ -591,6 +612,11 @@ async function calcolaPrevisione(percorsoIn) {
   }
   if (forbiceAmpia) {
     avvisi.push('Probabilità di pioggia molto diversa fra i modelli: guarda la forbice, non il numero secco');
+  }
+  if (trattiCongelamento) {
+    avvisi.push(
+      `Windchill da congelamento su ${trattiCongelamento} tratti: copri la pelle esposta (dettaglio per tratto nella tabella)`
+    );
   }
   const senzaDati = arricchiti.filter((a) => a.senzaDati).length;
   if (senzaDati) {
@@ -615,6 +641,30 @@ async function calcolaPrevisione(percorsoIn) {
     });
   }
 
+  // 10. Tabella di marcia: punti di controllo ogni 15 minuti di tabella
+  //     + regola del tramonto (finire almeno 1 ora prima)
+  const ultimoPunto = percorso.punti[percorso.punti.length - 1];
+  const sole = albaTramontoUtc(arrivo, ultimoPunto.lat, ultimoPunto.lon);
+  const tramonto = sole?.tramontoUtc ?? null;
+  const margineTramontoMin = tramonto
+    ? Math.round((tramonto.getTime() - arrivo.getTime()) / 60000)
+    : null;
+  if (margineTramontoMin != null && margineTramontoMin < 60) {
+    avvisi.push(
+      margineTramontoMin < 0
+        ? `Arrivo previsto ${-margineTramontoMin} min DOPO il tramonto delle ${formattaOra(tramonto, tz)}: frontale obbligatoria, valuta di anticipare`
+        : `Arrivo previsto a soli ${margineTramontoMin} min dal tramonto delle ${formattaOra(tramonto, tz)}: la regola è finire almeno 1 ora prima`
+    );
+  }
+  const marcia = puntiControllo(percorso, eta, 15).map((c) => {
+    const quando = new Date(partenzaUtc.getTime() + c.tMin * 60000);
+    let idx = 0;
+    for (let j = 1; j < arricchiti.length; j++) {
+      if (Math.abs(arricchiti[j].dCumKm - c.dKm) < Math.abs(arricchiti[idx].dCumKm - c.dKm)) idx = j;
+    }
+    return { ...c, orarioIso: quando.toISOString(), oraLocale: formattaOra(quando, tz), idxCampione: idx };
+  });
+
   return {
     nome: percorso.nome,
     fonte: percorso.fonte,
@@ -634,6 +684,9 @@ async function calcolaPrevisione(percorsoIn) {
     campioni: arricchiti,
     traccia: tracciaRidotta(percorso),
     tacche,
+    marcia,
+    tramontoIso: tramonto ? tramonto.toISOString() : null,
+    margineTramontoMin,
     unitaVento: imp.unitaVento,
     generatoIl: Date.now(),
   };
@@ -687,6 +740,7 @@ function render(r) {
     selezionaCampione
   );
   renderTabella($('tabella'), { campioni: r.campioni, unitaVento: r.unitaVento }, selezionaCampione);
+  renderMarcia($('marcia'), r);
 }
 
 function popupCampione(c) {

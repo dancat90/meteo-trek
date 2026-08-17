@@ -21,7 +21,8 @@ import {
   applicaQuote,
 } from '../js/percorso.js';
 import {
-  velocitaTobler,
+  velocitaPianoKmh,
+  tempoNomogrammaMin,
   tempoSvizzeroMin,
   calcolaEta,
   tempoAllaDistanza,
@@ -40,7 +41,12 @@ import {
 import { dataLocaleAUtc, offsetMinuti, oraApiUtc } from '../js/tempo.js';
 import { affidabilita, etichettaAffidabilita } from '../js/affidabilita.js';
 import { scoreCanali, fusione, canaliAttivi } from '../js/rischio.js';
-import { percepita } from '../js/percepita.js';
+import { percepita, utciDaValori } from '../js/percepita.js';
+import { puntiControllo } from '../js/marcia.js';
+import { albaTramontoUtc } from '../js/sole.js';
+import { windchillC, classeCongelamento } from '../js/windchill.js';
+import { mrtDiNapoli, cosszaDaToa, giornoAnnoUtc } from '../js/radiante.js';
+import { stUtci } from '../js/utci-poly.js';
 
 let falliti = 0;
 function test(nome, condizione, dettaglio = '') {
@@ -196,23 +202,38 @@ console.log('── Percorso ──');
 
 console.log('── Motore ETA ──');
 {
-  test('Tobler in piano ≈ 5 km/h', vicino(velocitaTobler(0), 5.037, 0.01));
-  test('Tobler massimo a -5%', velocitaTobler(-0.05) === 6);
-  test('àncora svizzera 12 km +400 = 240 min', tempoSvizzeroMin(12, 400, 0, 400) === 240);
-  test('discesa 8 km -400 = 150 min', tempoSvizzeroMin(8, 0, 400, 400) === 150);
-  test('passo 300 → ×4/3', vicino(tempoSvizzeroMin(12, 400, 0, 300), 320, 0.01));
-  test('passo 600 → ×2/3', vicino(tempoSvizzeroMin(12, 400, 0, 600), 160, 0.01));
+  // Ancoraggi del nomogramma Schweizer Wanderwege 1996 (i punti
+  // leggibili con certezza dal diagramma ufficiale)
+  test('piano: 4,2 km/h', velocitaPianoKmh(0) === 4.2 && velocitaPianoKmh(0.1) === 4.2);
+  test('spinta massima in discesa dolce', vicino(velocitaPianoKmh(-0.065), 4.83, 0.03), String(velocitaPianoKmh(-0.065)));
+  test('spinta spenta sul ripido', vicino(velocitaPianoKmh(-0.4), 4.2, 0.01));
+  test('piano 2,1 km = 30 min', vicino(tempoNomogrammaMin(2.1, 0), 30, 0.1));
+  test('salita pura 300 m ≈ 45 min', vicino(tempoNomogrammaMin(0.01, 300), 45, 0.5), String(tempoNomogrammaMin(0.01, 300)));
+  test('discesa pura 300 m ≈ 22,5 min', vicino(tempoNomogrammaMin(0.01, -300), 22.5, 0.5));
+  const t5su = tempoNomogrammaMin(5, 300);
+  test('5 km +300 m ≈ 80 min (nomogramma, non 116 additivi)', t5su >= 76 && t5su <= 84, String(t5su));
+  const t5giu = tempoNomogrammaMin(5, -300);
+  test('5 km −300 m ≈ 62-66 min (più veloce del piano)', t5giu >= 58 && t5giu <= 68, String(t5giu));
+  test('ripido: quasi additivo', vicino(tempoNomogrammaMin(0.5, 300), 45.5, 1.5), String(tempoNomogrammaMin(0.5, 300)));
+  test('monotono nella distanza', tempoNomogrammaMin(4, 300) < tempoNomogrammaMin(5, 300));
+  test('monotono nel dislivello', tempoNomogrammaMin(5, 200) < tempoNomogrammaMin(5, 300));
+
+  // La vecchia regola additiva resta come riferimento della guardia
+  test('additiva 12 km +400 = 240 min', tempoSvizzeroMin(12, 400, 0, 400) === 240);
+  test('additiva discesa 8 km -400 = 150 min', tempoSvizzeroMin(8, 0, 400, 400) === 150);
 
   const punti = tracciaSintetica({ n: 121, passoKm: 0.1, dTot: 400 });
   const perc = costruisciPercorso({ nome: null, fonte: 'gpx', punti });
   const eta = calcolaEta(perc, { mhSalita: 400, pausaMinOra: 0 });
   test(
-    'movimento = svizzero personalizzato (per costruzione)',
-    vicino(eta.durataMovimentoMin, tempoSvizzeroMin(perc.totKm, perc.dPlusM, perc.dMinusM, 400), 0.5),
+    'movimento = nomogramma personalizzato (per costruzione)',
+    vicino(eta.durataMovimentoMin, eta.tNomogrammaMin, 0.01),
     String(eta.durataMovimentoMin)
   );
-  test('àncora sintetica ≈ 4 h', vicino(eta.durataTotaleMin, 240, 4), String(eta.durataTotaleMin));
-  test('k dentro la guardia', eta.k >= 0.5 && eta.k <= 2.5, String(eta.k));
+  test('sintetica 12 km +400 dolce ≈ 176 min', vicino(eta.durataTotaleMin, 176, 6), String(eta.durataTotaleMin));
+  const etaLento = calcolaEta(perc, { mhSalita: 300, pausaMinOra: 0 });
+  test('passo 300 → ×4/3 sul totale', vicino(etaLento.durataTotaleMin, eta.durataTotaleMin * 4 / 3, 0.5));
+  test('k dentro la guardia', eta.k >= 0.45 && eta.k <= 1.1, String(eta.k));
   test('nessun avviso su traccia sana', eta.avvisi.length === 0);
   test('tCum monotona', eta.tCumMin.every((t, i) => i === 0 || t >= eta.tCumMin[i - 1]));
 
@@ -373,6 +394,88 @@ console.log('── Affidabilità ──');
   const soloLead = affidabilita({ sigmaTempC: null, diffTempC: null, diffRaffKmh: null, leadGiorni: 1 });
   test('solo lead → flag', soloLead.soloLead === true);
   test('etichetta alta', etichettaAffidabilita(80) === 'alta');
+}
+
+console.log('── Tabella di marcia e tramonto ──');
+{
+  const punti = tracciaSintetica({ n: 121, passoKm: 0.1, dTot: 400 });
+  const perc = costruisciPercorso({ nome: null, fonte: 'gpx', punti });
+  const eta = calcolaEta(perc, { mhSalita: 400, pausaMinOra: 10 });
+  const pc = puntiControllo(perc, eta, 15);
+  test('numero punti = durata/15 arrotondato', pc.length === Math.ceil(eta.durataTotaleMin / 15), `${pc.length} vs ${eta.durataTotaleMin}`);
+  test('tempi a passo 15 min', pc.slice(0, -1).every((p, i) => p.tMin === (i + 1) * 15));
+  test('ultimo punto = arrivo', vicino(pc[pc.length - 1].tMin, eta.durataTotaleMin, 0.01));
+  test('distanze crescenti', pc.every((p, i) => i === 0 || p.dKm > pc[i - 1].dKm));
+  test('ultimo punto a fine traccia', vicino(pc[pc.length - 1].dKm, perc.totKm, 0.05), String(pc[pc.length - 1].dKm));
+  test('quote presenti', pc.every((p) => Number.isFinite(p.quotaM)));
+  // Traccia sintetica in salita costante ~3,3%: la pendenza media dei
+  // tratti deve stare lì (bordi lisciati esclusi)
+  const pendCentro = pc.slice(1, -1).map((p) => p.pendenzaPct);
+  test('pendenza media ≈ +3,3%', pendCentro.every((x) => x > 1.5 && x < 5), JSON.stringify(pendCentro.slice(0, 3)));
+
+  // Tramonto: effemeridi note di Roma (41.9 N, 12.5 E), tolleranza 10 min
+  const estate = albaTramontoUtc(new Date(Date.UTC(2026, 7, 17, 12)), 41.9, 12.5);
+  test('Roma 17/08: tramonto ~18:10Z', Math.abs(estate.tramontoUtc.getTime() - Date.UTC(2026, 7, 17, 18, 10)) < 10 * 60000, estate.tramontoUtc.toISOString());
+  test('Roma 17/08: alba ~04:21Z', Math.abs(estate.albaUtc.getTime() - Date.UTC(2026, 7, 17, 4, 21)) < 10 * 60000);
+  const inverno = albaTramontoUtc(new Date(Date.UTC(2026, 11, 21, 12)), 41.9, 12.5);
+  test('Roma 21/12: tramonto ~15:42Z', Math.abs(inverno.tramontoUtc.getTime() - Date.UTC(2026, 11, 21, 15, 42)) < 10 * 60000, inverno.tramontoUtc.toISOString());
+  test('notte polare → null', albaTramontoUtc(new Date(Date.UTC(2026, 11, 21, 12)), 78, 15) === null);
+}
+
+console.log('── Windchill (tabella Environment Canada) ──');
+{
+  // Celle della tabella di riferimento dell'utente (arrotondate al grado)
+  const celle = [
+    [5, 5, 4], [0, 15, -4], [-10, 20, -18], [-20, 30, -33],
+    [-30, 50, -49], [-50, 80, -81],
+  ];
+  for (const [t, v, atteso] of celle) {
+    test(`windchill T=${t} v=${v} → ${atteso}`, Math.round(windchillC(t, v)) === atteso,
+      String(windchillC(t, v)));
+  }
+  test('fuori dominio: T > 10', windchillC(12, 20) === null);
+  test('fuori dominio: vento < 4,8', windchillC(0, 3) === null);
+  test('classe: basso a −20', classeCongelamento(-20).livello === 0);
+  test('classe: soglia −28', classeCongelamento(-28).livello === 1);
+  test('classe: −40 → 5-10 min', classeCongelamento(-40).livello === 2);
+  test('classe: −48 → 2-5 min', classeCongelamento(-48).livello === 3);
+  test('classe: −55 → <2 min', classeCongelamento(-55).livello === 4);
+  test('classe: −27,9 resta bassa', classeCongelamento(-27.9).livello === 0);
+}
+
+console.log('── Radiante e UTCI ──');
+{
+  // Notte coperta: cielo ~corpo nero e suolo alla T dell'aria → MRT = T
+  const mrtCoperto = mrtDiNapoli({ tC: 10, rh: 70, nuvole: 100, ssrd: 0, fdir: 0, dsrp: null, cossza: 0 });
+  test('notte coperta: MRT = T aria', vicino(mrtCoperto, 10, 0.05), String(mrtCoperto));
+  const mrtSereno = mrtDiNapoli({ tC: 10, rh: 40, nuvole: 0, ssrd: 0, fdir: 0, dsrp: null, cossza: 0 });
+  test('notte serena: MRT sotto la T aria', mrtSereno < 9, String(mrtSereno));
+  const mrtSole = mrtDiNapoli({ tC: 20, rh: 40, nuvole: 0, ssrd: 800, fdir: 600, dsrp: 900, cossza: 0.7 });
+  test('pieno sole: MRT sopra la T aria', mrtSole > 30, String(mrtSole));
+
+  test('cossza nullo di notte', cosszaDaToa(0, 180) === 0);
+  test('cossza ~1 a mezzogiorno equatoriale', cosszaDaToa(1330, 172) > 0.95);
+  test('giorno anno: 1 gennaio', giornoAnnoUtc(new Date(Date.UTC(2026, 0, 1))) === 1);
+  test('giorno anno: 31 dicembre', giornoAnnoUtc(new Date(Date.UTC(2026, 11, 31))) === 365);
+
+  // Proprietà fisiche del polinomio UTCI (il valore assoluto è validato
+  // a parte contro pythermalcomfort, vedi tools/valida_utci.mjs)
+  test('UTCI neutro ≈ T in condizioni miti', vicino(stUtci(20, 20, 0.5, 50), 20, 2.5), String(stUtci(20, 20, 0.5, 50)));
+  test('UTCI: il vento raffredda al freddo', stUtci(-5, -5, 10, 70) < stUtci(-5, -5, 1, 70) - 5);
+  test('UTCI: l\'umidità pesa nel caldo', stUtci(32, 32, 1, 80) > stUtci(32, 32, 1, 30) + 2);
+  test('UTCI: il sole scalda', stUtci(10, 40, 2, 50) > stUtci(10, 10, 2, 50) + 5);
+
+  // utciDaValori: catena completa dai valori orari del modello
+  const valoriSole = {
+    temperature_2m: 15, relative_humidity_2m: 45, wind_speed_10m: 18,
+    cloud_cover: 10, shortwave_radiation: 700, direct_radiation: 520,
+    direct_normal_irradiance: 800, terrestrial_radiation: 1000,
+  };
+  const uSole = utciDaValori(valoriSole, 200);
+  test('utciDaValori calcola con ingressi pieni', Number.isFinite(uSole), String(uSole));
+  const uSenzaRad = utciDaValori({ temperature_2m: 15, relative_humidity_2m: 45 }, 200);
+  test('utciDaValori null senza vento', uSenzaRad === null);
+  test('percepita ripiega su Steadman senza radiazione', percepita({ apparent_temperature: 21.5 }) === 21.5);
 }
 
 console.log('── Rischio ──');
