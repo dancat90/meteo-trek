@@ -8,7 +8,7 @@
 // - Ogni candidato con orizzonte insufficiente viene scartato con avviso.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { MODELLI } from '../config.js';
+import { MODELLI, MODELLI_CONFRONTO } from '../config.js';
 
 // Bbox utente interamente dentro il box del modello (box null = mondo)
 export function dentroBox(bbox, box) {
@@ -24,9 +24,20 @@ export function dentroBox(bbox, box) {
 // Riquadro "Italia" approssimato per la regola appenninica
 const ITALIA = { latMin: 35, latMax: 47.5, lonMin: 6.5, lonMax: 19 };
 
+// Modelli globali di confronto per la fascia di temperatura: sempre in
+// dominio (box null), filtrati per orizzonte e per non-duplicazione col
+// primario e col secondario.
+export function modelliConfronto(primario, secondario, leadOreMax) {
+  const esclusi = new Set([primario?.id, secondario?.id]);
+  return MODELLI_CONFRONTO.map((id) => MODELLI[id]).filter(
+    (m) => m && !esclusi.has(m.id) && m.orizzonteOre >= leadOreMax
+  );
+}
+
 // bbox: { latMin, latMax, lonMin, lonMax } dei punti campionati
 // leadOreMax: ore da adesso all'ultimo orario di passaggio previsto
-// Restituisce { primario, secondario, avvisi[] } (modelli di config.MODELLI)
+// Restituisce { primario, secondario, confronto[], avvisi[] }
+// (modelli di config.MODELLI)
 export function scegliModelli(bbox, leadOreMax) {
   const avvisi = [];
   const inItalia = dentroBox(bbox, ITALIA);
@@ -64,7 +75,7 @@ export function scegliModelli(bbox, leadOreMax) {
   if (!conOrizzonte.length) {
     // Nemmeno best_match: gita oltre 16 giorni, ci pensa il clamp a monte
     avvisi.push('Gita oltre l’orizzonte di ogni modello: previsione impossibile');
-    return { primario: null, secondario: null, avvisi };
+    return { primario: null, secondario: null, confronto: [], avvisi };
   }
   if (conOrizzonte[0].id !== idonei[0].id) {
     avvisi.push(
@@ -79,7 +90,12 @@ export function scegliModelli(bbox, leadOreMax) {
   const secondario =
     conOrizzonte.find((m) => m.id !== primario.id) || null;
 
-  return { primario, secondario, avvisi };
+  return {
+    primario,
+    secondario,
+    confronto: modelliConfronto(primario, secondario, leadOreMax),
+    avvisi,
+  };
 }
 
 // Il dettaglio a 15 minuti è NATIVO solo da ICON-D2 nel suo dominio:

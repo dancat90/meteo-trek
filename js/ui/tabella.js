@@ -31,6 +31,15 @@ let selezioneCb = null;
 const num = (v, dec = 0, unita = '') =>
   Number.isFinite(v) ? `${v.toFixed(dec)}${unita}` : '–';
 
+// Cella con fascia multi-modello: mediana + forbice colorata per accordo.
+// Senza fascia (meno di 2 modelli) resta il valore secco del primario.
+const CLASSE_ACCORDO = { alta: 'forbice-ok', media: 'forbice-media', bassa: 'forbice-ampia' };
+function cellaFascia(valore, f) {
+  if (!f) return num(valore, 0, '°');
+  const cl = CLASSE_ACCORDO[f.accordo] || '';
+  return `${num(f.mediana, 0, '°')} <span class="forbice ${cl}">[${num(f.min, 0)}–${num(f.max, 0)}]</span>`;
+}
+
 // campioni: voci arricchite (vedi app.js assemblaCampioni)
 // unitaVento: 'kmh' | 'ms'
 export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) {
@@ -87,8 +96,8 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
           <td>${c.dCumKm.toFixed(1)}</td>
           <td>${escapeHtml(c.oraLocale)}</td>
           <td>${num(c.eleM, 0, ' m')}</td>
-          <td>${num(v.temperature_2m, 0, '°')}</td>
-          <td>${num(c.percepitaC, 0, '°')}</td>
+          <td>${cellaFascia(v.temperature_2m, c.tFascia)}</td>
+          <td>${cellaFascia(c.percepitaC, c.percFascia)}</td>
           <td>${vFmt(v.wind_speed_10m)}</td>
           <td>${vFmt(v.wind_gusts_10m)}</td>
           <td>${num(v.relative_humidity_2m, 0, '%')}</td>
@@ -136,6 +145,13 @@ function righeDettaglio(c, vFmt, uVento) {
     parti.push(
       'rischio da: ' + c.canaliAttivi.map((k) => `${k.nome} (${k.score})`).join(', ')
     );
+  const perModello = (c.tPerModello || []).filter((m) => Number.isFinite(m.t));
+  if (perModello.length > 1) {
+    parti.push(
+      'T per modello: ' + perModello.map((m) => `${m.nome} ${Math.round(m.t)}°`).join(', ')
+    );
+  }
+  if (c.tFascia?.accordo) parti.push(`accordo modelli T: ${c.tFascia.accordo}`);
   if (c.aff)
     parti.push(
       `affidabilità ${c.aff.pct}% (${c.aff.etichetta})${c.aff.soloLead ? ' — solo lead time' : ''}`

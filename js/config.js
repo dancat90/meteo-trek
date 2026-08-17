@@ -103,7 +103,31 @@ export const MODELLI = {
     quindiciMin: false,
     pop: true,
   },
+  // ── Modelli globali di confronto (solo fascia temperatura) ────────────
+  // Mai primari: entrano solo nella catena `confronto` per la dispersione
+  // multi-modello di temperatura e percepita.
+  ecmwf_ifs025: {
+    id: 'ecmwf_ifs025',
+    nome: 'ECMWF IFS',
+    risoluzioneKm: 25,
+    orizzonteOre: 240,
+    box: null, // mondo
+    quindiciMin: false,
+    pop: false,
+  },
+  gfs_seamless: {
+    id: 'gfs_seamless',
+    nome: 'GFS (NOAA)',
+    risoluzioneKm: 13,
+    orizzonteOre: 384,
+    box: null, // mondo
+    quindiciMin: false,
+    pop: true,
+  },
 };
+
+// Modelli della chiamata di confronto (una sola HTTP, campi suffissati)
+export const MODELLI_CONFRONTO = ['ecmwf_ifs025', 'gfs_seamless'];
 
 // Variabili orarie chieste al modello primario (nomi esatti Open-Meteo)
 export const VARIABILI_PRIMARIO = [
@@ -128,10 +152,18 @@ export const VARIABILI_PRIMARIO = [
 // Variabili core del modello secondario (per la divergenza fra modelli)
 export const VARIABILI_SECONDARIO = [
   'temperature_2m',
+  'apparent_temperature',
   'precipitation',
   'wind_speed_10m',
   'wind_gusts_10m',
 ];
+
+// Variabili della chiamata ai modelli di confronto (fascia multi-modello)
+export const VARIABILI_CONFRONTO = ['temperature_2m', 'apparent_temperature'];
+
+// Dispersione min-max fra i modelli (°C) → accordo alto / medio / basso.
+// Colora la forbice di temperatura e percepita nella tabella.
+export const SOGLIE_DISPERSIONE_TEMP = { alta: 2, media: 4 };
 
 // ── Soglie di rischio per canale (score 0-3) ─────────────────────────────
 // Ogni canale produce uno score; la fusione (js/rischio.js) prende il

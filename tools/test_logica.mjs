@@ -26,7 +26,9 @@ import {
   calcolaEta,
   tempoAllaDistanza,
 } from '../js/eta.js';
-import { scegliModelli, dentroBox, quindiciMinDisponibile, motivoNiente15Min } from '../js/api/modelli.js';
+import { scegliModelli, dentroBox, quindiciMinDisponibile, motivoNiente15Min, modelliConfronto } from '../js/api/modelli.js';
+import { MODELLI } from '../js/config.js';
+import { fascia, classeDispersione } from '../js/dispersione.js';
 import {
   parseSanificato,
   serie,
@@ -281,6 +283,47 @@ console.log('── Selezione modello ──');
   test('motivo 15 min: area al Gran Sasso', motivoNiente15Min(granSasso, lead24) === 'area');
   test('motivo 15 min: orizzonte sulle Alpi a +4 gg', motivoNiente15Min(alpi, 96) === 'orizzonte');
   test('motivo 15 min: null quando disponibile', motivoNiente15Min(alpi, lead24) === null);
+}
+
+console.log('── Fascia multi-modello (dispersione) ──');
+{
+  const f3 = fascia([14, 16.6, 13.7]);
+  test('mediana dispari', vicino(f3.mediana, 14, 0.001), String(f3.mediana));
+  test('min-max e spread', f3.min === 13.7 && f3.max === 16.6 && vicino(f3.spread, 2.9, 0.001));
+
+  const f4 = fascia([14, 16.6, 13.7, 15.8]);
+  test('mediana pari interpola', vicino(f4.mediana, 14.9, 0.001), String(f4.mediana));
+  test('n conta i validi', f4.n === 4);
+
+  const conBuchi = fascia([14, null, NaN, 16, undefined]);
+  test('ignora i non finiti', conBuchi.n === 2 && conBuchi.spread === 2);
+  test('null sotto 2 valori', fascia([14]) === null && fascia([]) === null && fascia(null) === null);
+
+  test('accordo alto a 2 °C', classeDispersione(2) === 'alta');
+  test('accordo medio a 3 °C', classeDispersione(3) === 'media');
+  test('accordo medio a 4 °C', classeDispersione(4) === 'media');
+  test('accordo basso oltre 4 °C', classeDispersione(4.1) === 'bassa');
+  test('classe null senza spread', classeDispersione(null) === null);
+
+  const alpi = { latMin: 46.4, latMax: 46.6, lonMin: 11.2, lonMax: 11.4 };
+  const s = scegliModelli(alpi, 24);
+  test(
+    'confronto = ECMWF + GFS',
+    s.confronto.length === 2 &&
+      s.confronto[0].id === 'ecmwf_ifs025' &&
+      s.confronto[1].id === 'gfs_seamless',
+    JSON.stringify(s.confronto.map((m) => m.id))
+  );
+  const sLunga = scegliModelli(alpi, 300);
+  test(
+    'confronto a +300 h: solo GFS (ECMWF si ferma a 240 h)',
+    sLunga.confronto.length === 1 && sLunga.confronto[0].id === 'gfs_seamless',
+    JSON.stringify(sLunga.confronto.map((m) => m.id))
+  );
+  const dedup = modelliConfronto(MODELLI.ecmwf_ifs025, null, 24);
+  test('confronto non duplica il primario', dedup.every((m) => m.id !== 'ecmwf_ifs025'));
+  const oltre = scegliModelli(alpi, 500);
+  test('oltre ogni orizzonte: confronto vuoto', oltre.primario === null && oltre.confronto.length === 0);
 }
 
 console.log('── Client meteo (parsing puro) ──');

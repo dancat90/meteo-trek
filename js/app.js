@@ -7,14 +7,15 @@
 // di un percorso abbandonato.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI } from './config.js';
+import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI } from './config.js';
 import * as storage from './storage.js';
 import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc } from './tempo.js';
 import { campionaTraccia, bboxPunti } from './geo.js';
 import { percorsoDaGpx, percorsoDaKomoot, costruisciPercorso, campioniPerQuota, applicaQuote } from './percorso.js';
 import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza } from './eta.js';
 import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/modelli.js';
-import { meteoModello, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
+import { meteoModello, meteoConfronto, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
+import { fascia, classeDispersione } from './dispersione.js';
 import { ensemblePrecipitazione } from './api/ensemble.js';
 import { estraiUserId, estraiTourId, elencaTourPianificati, coordinateTour, dettagliTour } from './api/komoot.js';
 import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
@@ -370,7 +371,7 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito, celleEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito, confEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
@@ -379,6 +380,16 @@ async function calcolaPrevisione(percorsoIn) {
     // Quota VERA delle celle: la risposta con elevation esplicito fa solo
     // eco del valore inviato, serve la chiamata dedicata
     quoteCelle(campioni, scelta.primario),
+    // Modelli globali di confronto (fascia di temperatura): una sola HTTP
+    scelta.confronto?.length
+      ? meteoConfronto({
+          campioni,
+          orari,
+          modelli: scelta.confronto,
+          variabili: VARIABILI_CONFRONTO,
+          ...finestra,
+        })
+      : Promise.resolve(null),
   ]);
 
   // 7. Degradazioni esplicite, mai silenziose
@@ -413,6 +424,17 @@ async function calcolaPrevisione(percorsoIn) {
   }
   const ens = ensEsito.status === 'fulfilled' ? ensEsito.value : null;
   if (!ens) avvisi.push('Ensemble non disponibile: niente forbice di probabilità');
+
+  // Modelli di confronto: tengo solo quelli con copertura decente e
+  // diversi dal modello effettivamente usato (dopo un eventuale ripiego
+  // il secondario è diventato primario)
+  const conf =
+    confEsito.status === 'fulfilled' && Array.isArray(confEsito.value)
+      ? confEsito.value.filter((r) => r.copertura >= 0.5 && r.modello.id !== modelloUsato.id)
+      : [];
+  if (scelta.confronto?.length && !conf.length) {
+    avvisi.push('Modelli di confronto non disponibili: fascia di temperatura ridotta');
+  }
 
   // Quote celle: valide solo se il modello usato è rimasto il primario
   const quotaCelleArr =
@@ -459,8 +481,39 @@ async function calcolaPrevisione(percorsoIn) {
     const score = p ? fusione(canali) : 0;
 
     const vSec = sec?.perCampione?.[i]?.valori;
-    const diffTempC =
-      vSec && Number.isFinite(valori.temperature_2m) && Number.isFinite(vSec.temperature_2m)
+
+    // Fascia multi-modello di T e percepita: modello usato + secondario +
+    // modelli di confronto, tutti già alla quota del sentiero
+    const perModello = [];
+    if (p) {
+      perModello.push({ nome: modelloUsato.nome, t: valori.temperature_2m, perc: percepitaC });
+    }
+    if (vSec) {
+      perModello.push({
+        nome: scelta.secondario.nome,
+        t: vSec.temperature_2m,
+        perc: vSec.apparent_temperature,
+      });
+    }
+    for (const r of conf) {
+      const vc = r.perCampione?.[i]?.valori;
+      if (vc) perModello.push({ nome: r.modello.nome, t: vc.temperature_2m, perc: vc.apparent_temperature });
+    }
+    const tFasciaBase = fascia(perModello.map((m) => m.t));
+    const tFascia = tFasciaBase
+      ? { ...tFasciaBase, accordo: classeDispersione(tFasciaBase.spread) }
+      : null;
+    const percFasciaBase = fascia(perModello.map((m) => m.perc));
+    const percFascia = percFasciaBase
+      ? { ...percFasciaBase, accordo: classeDispersione(percFasciaBase.spread) }
+      : null;
+
+    // La divergenza fra modelli alimenta l'affidabilità: con la fascia
+    // disponibile vale lo spread min-max, altrimenti il vecchio confronto
+    // a coppia primario-secondario
+    const diffTempC = tFascia
+      ? tFascia.spread
+      : vSec && Number.isFinite(valori.temperature_2m) && Number.isFinite(vSec.temperature_2m)
         ? Math.abs(valori.temperature_2m - vSec.temperature_2m)
         : null;
     const diffRaffKmh =
@@ -517,6 +570,9 @@ async function calcolaPrevisione(percorsoIn) {
       oraLocale,
       valori,
       percepitaC,
+      tFascia,
+      percFascia,
+      tPerModello: perModello,
       canali,
       canaliAttivi: p ? canaliAttivi(canali) : [],
       score,

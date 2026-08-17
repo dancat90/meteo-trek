@@ -180,6 +180,57 @@ export async function meteoModello({
   return { perCampione, copertura: coperti / campioni.length };
 }
 
+// ── Chiamata unica ai modelli di confronto (fascia multi-modello) ───────
+//
+// Più modelli in una sola HTTP: la risposta arriva con i campi suffissati
+// (`temperature_2m_<id>`) e `serie()` li risolve già. Stesso downscaling
+// alla quota sentiero della chiamata principale. Restituisce
+// [{ modello, perCampione: [{valori}|null], copertura }] allineato a
+// `modelli`, oppure lancia (il chiamante degrada con avviso).
+
+export async function meteoConfronto({
+  campioni,
+  orari,
+  modelli,
+  variabili,
+  startHour,
+  endHour,
+}) {
+  const parametri = {
+    models: modelli.map((m) => m.id).join(','),
+    hourly: variabili.join(','),
+    timezone: 'UTC',
+    start_hour: startHour,
+    end_hour: endHour,
+    cell_selection: 'land',
+  };
+  const quote = campioni.every((c) => Number.isFinite(c.eleM))
+    ? campioni.map((c) => Math.round(c.eleM))
+    : null;
+
+  const localita = await chiamataMultiLocalita(API.openMeteo, campioni, parametri, quote);
+
+  return modelli.map((modello) => {
+    let coperti = 0;
+    const perCampione = campioni.map((c, i) => {
+      const hourly = localita[i]?.hourly;
+      if (!hourly || !hourly.time?.length) return null;
+      const idx = indiceOrario(hourly.time, orari[i]);
+      const valori = {};
+      let almenoUno = false;
+      for (const v of variabili) {
+        const val = valoreVicino(serie(hourly, v, modello.id), idx);
+        valori[v] = val;
+        if (val !== null) almenoUno = true;
+      }
+      if (!almenoUno) return null;
+      coperti++;
+      return { valori };
+    });
+    return { modello, perCampione, copertura: coperti / campioni.length };
+  });
+}
+
 // ── Quota reale delle celle di griglia del modello ──────────────────────
 // Con `elevation` esplicito la risposta fa ECO del valore inviato
 // (verificato live): per conoscere la quota VERA della cella serve una

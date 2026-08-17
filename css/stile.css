@@ -222,6 +222,10 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
   background: var(--pannello-alto);
 }
 .forbice { color: var(--testo-secondario); font-size: 0.75rem; }
+/* Accordo fra i modelli sulla fascia di temperatura (palette del rischio) */
+.forbice-ok { color: #2ea043; }
+.forbice-media { color: #f2cc60; }
+.forbice-ampia { color: #da3633; }
 .neve { color: var(--accento); }
 
 /* ── Impostazioni ── */
