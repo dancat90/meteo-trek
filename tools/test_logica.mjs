@@ -44,6 +44,7 @@ import { scoreCanali, fusione, canaliAttivi } from '../js/rischio.js';
 import { percepita, utciDaValori } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
 import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
+import { puntiSonda, abbinaRegole } from '../js/api/areeprotette.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -539,6 +540,49 @@ console.log('── Copertura Vodafone (stima OpenCelliD) ──');
   const mare = stimaRete(g, { lat: 40.2, lon: 11.5 });
   test('Tirreno aperto → assente', mare.classe === 'assente', JSON.stringify(mare));
   test('Tirreno aperto: nemmeno altre reti', mare.emergenzaAltraRete === false);
+}
+
+console.log('── Aree protette (regole cani) ──');
+{
+  const molti = Array.from({ length: 25 }, (_, i) => ({ lat: 42 + i * 0.01, lon: 13 }));
+  const sonde = puntiSonda(molti, 8);
+  test('8 sonde da 25 campioni', sonde.length === 8);
+  test('sonde: prima e ultima agli estremi', sonde[0].lat === 42 && vicino(sonde[7].lat, 42.24, 1e-9));
+  test('pochi campioni → tutti sonda', puntiSonda([{ lat: 1, lon: 1 }], 8).length === 1);
+  test('nessun campione → vuoto', puntiSonda([], 8).length === 0);
+
+  const tabella = [
+    { chiavi: ['gran paradiso'], classe: 'vietato', nota: 'Vietati sui sentieri', fonte: 'x', sito: 'https://pngp.it', verificato: '2026-08-17' },
+  ];
+  const aree = [
+    { nome: 'Parco Nazionale Gran Paradiso', tipo: 'Parco nazionale', sito: null, caneOsm: null },
+    { nome: 'Riserva Sconosciuta', tipo: 'Riserva naturale', sito: 'https://ente.it', caneOsm: null },
+    { nome: 'Oasi Taggata', tipo: 'Area protetta', sito: null, caneOsm: 'leashed' },
+  ];
+  const esito = abbinaRegole(aree, tabella);
+  test('abbinamento per chiave nel nome', esito[0].cani?.classe === 'vietato');
+  test('sito preso dalla tabella se OSM non ce l\'ha', esito[0].sito === 'https://pngp.it');
+  test('area non censita → cani null', esito[1].cani === null);
+  test('tag OSM leashed → guinzaglio', esito[2].cani?.classe === 'guinzaglio');
+
+  // Tabella REALE inclusa nel repo: copertura e abbinamenti campione
+  const quiDirAree = dirname(fileURLToPath(import.meta.url));
+  const reale = JSON.parse(
+    readFileSync(join(quiDirAree, '../dati/parchi-cani.json'), 'utf8')
+  );
+  test('tabella: almeno 24 parchi censiti', reale.parchi.length >= 24, String(reale.parchi.length));
+  test('tabella: ogni voce ha classe valida', reale.parchi.every((p) => ['vietato', 'guinzaglio', 'parziale', 'verifica'].includes(p.classe)));
+  test('tabella: ogni voce ha fonte e sito', reale.parchi.every((p) => p.fonte && p.sito && p.chiavi?.length));
+  const osmNomi = [
+    ['Parco Nazionale del Gran Sasso e Monti della Laga', 'verifica'],
+    ['Parco Nazionale Gran Paradiso', 'vietato'],
+    ['Parco nazionale d\'Abruzzo, Lazio e Molise', 'parziale'],
+    ['Parco Nazionale delle Cinque Terre', 'guinzaglio'],
+  ];
+  for (const [nome, attesa] of osmNomi) {
+    const [m] = abbinaRegole([{ nome, tipo: 'Parco nazionale', sito: null, caneOsm: null }], reale.parchi);
+    test(`abbinamento reale: ${nome.slice(0, 30)}… → ${attesa}`, m.cani?.classe === attesa, JSON.stringify(m.cani));
+  }
 }
 
 console.log('── Rischio ──');

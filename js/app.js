@@ -24,6 +24,7 @@ import { giornoAnnoUtc } from './radiante.js';
 import { windchillC, classeCongelamento } from './windchill.js';
 import { puntiControllo } from './marcia.js';
 import { caricaGriglia, stimaRete } from './copertura.js';
+import { areeConRegole } from './api/areeprotette.js';
 import { albaTramontoUtc } from './sole.js';
 import { renderMarcia } from './ui/marcia.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
@@ -378,7 +379,7 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
@@ -399,6 +400,8 @@ async function calcolaPrevisione(percorsoIn) {
       : Promise.resolve(null),
     // Mappa statica di copertura Vodafone (via service worker: offline ok)
     caricaGriglia(),
+    // Aree protette attraversate + regole sui cani (Overpass + tabella)
+    areeConRegole(campioni),
   ]);
 
   // 7. Degradazioni esplicite, mai silenziose
@@ -449,6 +452,19 @@ async function calcolaPrevisione(percorsoIn) {
   const cop = copEsito.status === 'fulfilled' ? copEsito.value : null;
   if (!cop) {
     avvisi.push('Stima copertura Vodafone non disponibile (mappa celle non caricata)');
+  }
+
+  // Aree protette e regole sui cani: divieti e limitazioni fra gli avvisi
+  const areeProt = areeEsito.status === 'fulfilled' ? areeEsito.value : null;
+  if (!areeProt) {
+    avvisi.push('Controllo aree protette non riuscito (OpenStreetMap non risponde)');
+  }
+  for (const a of areeProt || []) {
+    if (a.cani?.classe === 'vietato') {
+      avvisi.push(`${a.nome}: CANI VIETATI sui sentieri — conferma sul sito dell'ente`);
+    } else if (a.cani?.classe === 'parziale') {
+      avvisi.push(`${a.nome}: cani ammessi solo con limitazioni — verifica zone e periodi sul sito dell'ente`);
+    }
   }
 
   // Quote celle: valide solo se il modello usato è rimasto il primario
@@ -710,6 +726,7 @@ async function calcolaPrevisione(percorsoIn) {
     marcia,
     tramontoIso: tramonto ? tramonto.toISOString() : null,
     margineTramontoMin,
+    areeProtette: areeProt,
     unitaVento: imp.unitaVento,
     generatoIl: Date.now(),
   };
@@ -743,6 +760,7 @@ function render(r) {
       <span class="dato">${durataOre} h ${String(durataMin).padStart(2, '0')}<small>durata con pause</small></span>
     </div>
     ${r.avvisi.length ? `<div class="avvisi">${r.avvisi.map((a) => `<div>⚠ ${escapeHtml(a)}</div>`).join('')}</div>` : ''}
+    ${bloccoAreeProtette(r)}
     <div class="meta-riepilogo">
       Modello ${escapeHtml(r.modello.nome)} (~${r.modello.risoluzioneKm} km)
       ${r.secondarioNome ? ` · confronto con ${escapeHtml(r.secondarioNome)}` : ''}
@@ -764,6 +782,35 @@ function render(r) {
   );
   renderTabella($('tabella'), { campioni: r.campioni, unitaVento: r.unitaVento }, selezionaCampione);
   renderMarcia($('marcia'), r);
+}
+
+// Riquadro delle aree protette attraversate, con la regola sui cani
+function bloccoAreeProtette(r) {
+  if (!r.areeProtette) return '';
+  if (!r.areeProtette.length) {
+    return '<div class="aree-protette">Nessuna area protetta rilevata lungo il percorso (dato OpenStreetMap)</div>';
+  }
+  const ETICHETTE_CANI = {
+    vietato: 'cani VIETATI sui sentieri',
+    guinzaglio: 'cani ammessi al guinzaglio',
+    parziale: 'cani ammessi solo con limitazioni',
+    verifica: 'regole sui cani da verificare',
+  };
+  const voci = r.areeProtette
+    .map((a) => {
+      const regola = a.cani
+        ? `${ETICHETTE_CANI[a.cani.classe] || 'regole sui cani da verificare'}${
+            a.cani.nota ? ` — ${escapeHtml(a.cani.nota)}` : ''
+          }${a.cani.verificato ? ` <span class="forbice">(verificata il ${escapeHtml(a.cani.verificato)})</span>` : ''}`
+        : 'regole sui cani non censite: verifica sul sito dell’ente';
+      const sito = a.sito
+        ? ` · <a href="${escapeHtml(a.sito)}" target="_blank" rel="noopener">sito dell’ente</a>`
+        : '';
+      return `<div class="area-protetta"><strong>${escapeHtml(a.nome)}</strong> <span class="forbice">(${escapeHtml(a.tipo)})</span><br>${regola}${sito}</div>`;
+    })
+    .join('');
+  return `<div class="aree-protette"><strong>Aree protette attraversate</strong>${voci}
+    <div class="forbice">Indicazione, non garanzia: fa fede il regolamento dell’ente (zone e stagioni possono variare)</div></div>`;
 }
 
 function popupCampione(c) {

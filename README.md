@@ -78,6 +78,17 @@ garanzia**: il database è crowdsourced e i rilievi schermano il segnale.
 Rigenerazione mappa: scaricare il dump MCC 222 da OpenCelliD e lanciare
 `node tools/genera_copertura.mjs <222.csv>`.
 
+## Aree protette e cani
+
+Sotto il riepilogo compare l'elenco delle aree protette attraversate
+(parchi, riserve), rilevate da OpenStreetMap via Overpass (con mirror
+di riserva). Per ciascuna: regola sull'accesso dei cani — dal tag OSM
+se esiste, altrimenti dalla tabella curata dei parchi nazionali
+(`dati/parchi-cani.json`, fonti ufficiali degli enti, con data di
+verifica) — e collegamento al sito dell'ente. Divieti e limitazioni
+finiscono anche fra gli avvisi. **Indicazione, non garanzia**: le
+regole cambiano e variano per zona e stagione, fa fede l'ente.
+
 ## Modelli meteo
 
 - Alpi: MeteoSwiss ICON-CH2 (~2 km, 5 giorni) con confronto ICON-D2;

@@ -228,6 +228,17 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
 .forbice-ampia { color: #da3633; }
 .neve { color: var(--accento); }
 
+/* ── Aree protette ── */
+.aree-protette {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--bordo);
+  border-radius: 10px;
+  background: var(--pannello-alto);
+  font-size: 0.9rem;
+}
+.area-protetta { margin-top: 6px; }
+
 /* ── Tabella di marcia ── */
 .marcia { margin-top: 16px; }
 .marcia-testata {

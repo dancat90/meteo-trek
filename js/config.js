@@ -239,6 +239,12 @@ export const API = {
   komoot: 'https://www.komoot.com/api/v007',
   outdooractiveGpx: 'https://www.outdooractive.com/en/download.tour.gpx',
   openCelliD: 'https://opencellid.org/cell/getInArea',
+  // Overpass: principale + mirror di riserva (provati in ordine)
+  overpass: [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+  ],
 };
 
 // Stima copertura mobile: distanza (km) dalla cella Vodafone più vicina
