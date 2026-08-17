@@ -48,7 +48,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { albaTramontoUtc } from '../js/sole.js';
-import { puntoDaTraccia, mercatorPx, scegliZoom } from '../js/ui/marcia.js';
+import { puntoDaTraccia, mercatorPx, scegliZoom, raggruppaPunti } from '../js/ui/marcia.js';
 import { windchillC, classeCongelamento } from '../js/windchill.js';
 import { mrtDiNapoli, cosszaDaToa, giornoAnnoUtc } from '../js/radiante.js';
 import { stUtci } from '../js/utci-poly.js';
@@ -445,6 +445,22 @@ console.log('── Tabella di marcia e tramonto ──');
   const b = mercatorPx(46, 11.15, zb);
   test('zoom scelto: riquadro entro il lato massimo', b.x - a.x <= 1100 && b.y - a.y <= 1100, String(zb));
   test('zoom più stretto sforerebbe', (() => { const a2 = mercatorPx(46.1, 11, zb + 1); const b2 = mercatorPx(46, 11.15, zb + 1); return b2.x - a2.x > 1100 || b2.y - a2.y > 1100; })());
+
+  // Raggruppamento dei pallini sovrapposti (andata e ritorno)
+  const proietta = (p) => ({ x: p.lon * 1000, y: p.lat * 1000 });
+  const quattro = [
+    { lat: 0, lon: 0 },      // 1
+    { lat: 0, lon: 0.01 },   // 2, a 10 px dal n.1 → stesso pallino
+    { lat: 0, lon: 1 },      // 3, lontano
+    { lat: 0, lon: 0.005 },  // 4, di nuovo vicino al n.1
+  ];
+  const gruppi = raggruppaPunti(quattro, 26, proietta);
+  test('sovrapposti → 2 pallini', gruppi.length === 2, JSON.stringify(gruppi.map((g) => g.indici)));
+  test('pallino con 1, 2 e 4', JSON.stringify(gruppi[0].indici) === '[0,1,3]');
+  test('numeri in ordine crescente', gruppi.every((g) => g.indici.every((v, k) => k === 0 || v > g.indici[k - 1])));
+  const sparsi = raggruppaPunti(quattro, 2, proietta);
+  test('soglia stretta → nessuna fusione', sparsi.length === 4);
+  test('punti nulli ignorati', raggruppaPunti([null, { lat: 0, lon: 0 }], 26, proietta).length === 1);
 }
 
 console.log('── Windchill (tabella Environment Canada) ──');

@@ -70,6 +70,26 @@ export function scegliZoom(bounds, latoMaxPx = 1100) {
   return 6;
 }
 
+// Raggruppa i punti di controllo che cadrebbero sovrapposti: due punti
+// finiscono nello stesso pallino se distano meno di sogliaPx nella
+// proiezione corrente (es. andata e ritorno sullo stesso sentiero).
+// proietta(punto) → {x, y} in pixel. Restituisce
+// [{ punto, indici: [i, ...] }] con gli indici in ordine crescente.
+export function raggruppaPunti(punti, sogliaPx, proietta) {
+  const gruppi = [];
+  punti.forEach((p, i) => {
+    if (!p) return;
+    const q = proietta(p);
+    const vicino = gruppi.find((g) => {
+      const gq = proietta(g.punto);
+      return Math.hypot(gq.x - q.x, gq.y - q.y) < sogliaPx;
+    });
+    if (vicino) vicino.indici.push(i);
+    else gruppi.push({ punto: p, indici: [i] });
+  });
+  return gruppi;
+}
+
 // ── Dati di riga ────────────────────────────────────────────────────────
 
 function righeDati(r) {
@@ -212,42 +232,65 @@ function disegnaMappaMarcia(el, r, punti) {
     .bindTooltip('Partenza')
     .addTo(mappaMarcia);
 
-  // Punti di controllo numerati, cliccabili
-  markerControlli = punti.map((p, i) => {
-    if (!p) return null;
-    const m = L.marker([p.lat, p.lon], {
-      icon: L.divIcon({
-        className: 'pin-wrap',
-        html: `<div class="pin-controllo" data-i="${i}">${i + 1}</div>`,
-        iconSize: [26, 26],
-        iconAnchor: [13, 13],
-      }),
-    }).addTo(mappaMarcia);
-    m.on('click', () => selezionaControllo(i, true));
-    return m;
-  });
+  // Punti di controllo numerati, raggruppati quando si sovrappongono e
+  // ricalcolati a ogni cambio di zoom (a zoom alto si separano di nuovo)
+  const ridisegnaPin = () => disegnaPin(punti);
+  mappaMarcia.on('zoomend', ridisegnaPin);
 
   mappaMarcia.fitBounds(
     L.latLngBounds(r.traccia.map((p) => [p.lat, p.lon])),
     { padding: [24, 24] }
   );
+  ridisegnaPin();
   // Il container esce ora da [hidden]: senza invalidateSize la mappa
   // resterebbe alla size (0,0) cacheata
-  setTimeout(() => mappaMarcia?.invalidateSize(), 0);
+  setTimeout(() => {
+    mappaMarcia?.invalidateSize();
+    ridisegnaPin();
+  }, 0);
 }
 
-// Selezione sincronizzata tabella ↔ mappa (nei due sensi)
+// (Ri)disegna i pallini numerati raggruppando i sovrapposti alla scala
+// di zoom corrente
+function disegnaPin(punti) {
+  if (!mappaMarcia) return;
+  for (const v of markerControlli) v?.marker?.remove();
+  const gruppi = raggruppaPunti(punti, 30, (p) => {
+    const q = mappaMarcia.latLngToLayerPoint([p.lat, p.lon]);
+    return { x: q.x, y: q.y };
+  });
+  markerControlli = gruppi.map((g) => {
+    const etichetta = g.indici.map((i) => i + 1).join('·');
+    const m = L.marker([g.punto.lat, g.punto.lon], {
+      icon: L.divIcon({
+        className: 'pin-wrap',
+        html: `<div class="pin-controllo" data-indici="${g.indici.join(',')}">${etichetta}</div>`,
+        // Il centraggio sul punto lo fa il CSS (translate -50%/-50%)
+        iconSize: null,
+        iconAnchor: [0, 0],
+      }),
+    }).addTo(mappaMarcia);
+    m.on('click', () => selezionaControllo(g.indici[0], true));
+    return { marker: m, indici: g.indici };
+  });
+}
+
+// Selezione sincronizzata tabella ↔ mappa (nei due sensi). Un pallino
+// raggruppato evidenzia TUTTE le sue righe (es. «3·11» → righe 3 e 11).
 function selezionaControllo(i, daMappa) {
+  const gruppo = markerControlli.find((g) => g?.indici?.includes(i));
+  const daEvidenziare = daMappa && gruppo ? gruppo.indici : [i];
   righeMarcia.forEach((tr) =>
-    tr.classList.toggle('selezionata', Number(tr.dataset.idx) === i)
+    tr.classList.toggle('selezionata', daEvidenziare.includes(Number(tr.dataset.idx)))
   );
-  document
-    .querySelectorAll('.pin-controllo')
-    .forEach((p) => p.classList.toggle('selezionato', Number(p.dataset.i) === i));
+  document.querySelectorAll('.pin-controllo').forEach((p) => {
+    const indici = (p.dataset.indici || '').split(',').map(Number);
+    p.classList.toggle('selezionato', indici.includes(i));
+  });
   if (daMappa) {
-    righeMarcia[i]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  } else if (markerControlli[i] && mappaMarcia) {
-    mappaMarcia.panTo(markerControlli[i].getLatLng());
+    righeMarcia[daEvidenziare[0]]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } else if (gruppo && mappaMarcia) {
+    mappaMarcia.panTo(gruppo.marker.getLatLng());
   }
 }
 
@@ -349,23 +392,33 @@ async function componiCanvas(r, punti, conTile) {
   ctx.strokeStyle = '#ffffff';
   ctx.stroke();
 
-  // Punti di controllo numerati
+  // Punti di controllo numerati, raggruppati quando si sovrappongono
+  // (stessa regola della mappa a schermo: «3·11» in una sola pillola)
   ctx.font = 'bold 12px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  punti.forEach((p, i) => {
-    if (!p) return;
+  const gruppi = raggruppaPunti(punti, 26, (p) => {
     const [x, y] = aPx(p);
+    return { x, y };
+  });
+  for (const g of gruppi) {
+    const [x, y] = aPx(g.punto);
+    const testo = g.indici.map((i) => i + 1).join('·');
+    const mezzaL = Math.max(11, ctx.measureText(testo).width / 2 + 7);
     ctx.beginPath();
-    ctx.arc(x, y, 11, 0, 2 * Math.PI);
+    // Pillola: due semicerchi + lati (roundRect a mano, compatibile ovunque)
+    ctx.arc(x - mezzaL + 11, y, 11, Math.PI / 2, (3 * Math.PI) / 2);
+    ctx.lineTo(x + mezzaL - 11, y - 11);
+    ctx.arc(x + mezzaL - 11, y, 11, (3 * Math.PI) / 2, Math.PI / 2);
+    ctx.closePath();
     ctx.fillStyle = '#ffffff';
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#0d1117';
     ctx.stroke();
     ctx.fillStyle = '#0d1117';
-    ctx.fillText(String(i + 1), x, y + 0.5);
-  });
+    ctx.fillText(testo, x, y + 0.5);
+  }
 
   return canvas.toDataURL('image/png');
 }

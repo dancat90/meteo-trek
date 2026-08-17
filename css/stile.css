@@ -249,10 +249,14 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
 .riga-marcia { cursor: pointer; }
 /* Marker numerati dei punti di controllo */
 .pin-wrap { background: none; border: none; }
+/* Pillola centrata sul punto: si allarga coi numeri raggruppati («3·11») */
 .pin-controllo {
-  width: 26px;
+  min-width: 26px;
+  width: max-content;
   height: 26px;
-  border-radius: 50%;
+  padding: 0 7px;
+  box-sizing: border-box;
+  border-radius: 13px;
   background: #0d1117;
   color: #fff;
   border: 2px solid #fff;
@@ -261,12 +265,14 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
   justify-content: center;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
 }
 .pin-controllo.selezionato {
   background: #2f81f7;
-  transform: scale(1.25);
+  transform: translate(-50%, -50%) scale(1.2);
 }
 
 /* ── Impostazioni ── */
