@@ -3,8 +3,11 @@
 PWA statica (vanilla JS, zero build, zero backend) che mostra il meteo
 previsto **tratto per tratto** lungo un percorso di trekking, **all'orario
 in cui ci passerai**: temperatura, percepita, umidità, vento e raffiche,
-radiazione solare (W/m²), probabilità e quantità di precipitazione, più
-un livello di rischio per tratto.
+radiazione solare (W/m²), nuvolosità con quota della base delle nubi
+(dal modello dove disponibile — MeteoSwiss sulle Alpi — altrimenti
+stima dal livello di condensazione, marcata con «~»; «in nube» quando
+la base è sotto il sentiero), probabilità e quantità di precipitazione,
+più un livello di rischio per tratto.
 
 App: https://dancat90.github.io/meteo-trek/
 

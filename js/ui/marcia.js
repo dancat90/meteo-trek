@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { escapeHtml } from './mappa.js';
+import { cellaNuvole } from './tabella.js';
 import { formattaOra } from '../tempo.js';
 import { COLORI_SEVERITA } from '../config.js';
 
@@ -108,6 +109,14 @@ function righeDati(r) {
       t: num(v.temperature_2m, 0, '°'),
       perc: num(c.percepitaC, 0, '°'),
       raff: num(v.wind_gusts_10m, 0),
+      nuvole: c.nuvole || null,
+      nuvolePdf: c.nuvole
+        ? `${Math.round(c.nuvole.coperturaPct)}%${
+            Number.isFinite(c.nuvole.baseM)
+              ? ` ${c.nuvole.stima ? '~' : ''}${c.nuvole.baseM}`
+              : ''
+          }${c.nuvole.inNube ? ' IN NUBE' : ''}`
+        : '–',
       prob: num(v.precipitation_probability ?? c.ens?.popKN, 0, '%'),
       mm: num(v.precipitation, 1),
       rete: c.rete?.classe || null,
@@ -166,14 +175,14 @@ export function renderMarcia(el, r) {
         <thead><tr>
           <th>#</th><th>ora</th><th>tempo<br>parz/tot</th><th>km<br>parz/tot</th>
           <th>quota</th><th>pend.</th><th>T</th><th>perc.</th>
-          <th>raffiche<br>km/h</th><th>prob.</th><th>mm</th><th>rete</th>
+          <th>raffiche<br>km/h</th><th>nuvole<br>base</th><th>prob.</th><th>mm</th><th>rete</th>
         </tr></thead>
         <tbody>${righe
           .map(
             (x, i) => `<tr class="riga-marcia" data-idx="${i}">
           <td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
           <td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td>
-          <td>${x.raff}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteDot(x.rete)}</td>
+          <td>${x.raff}</td><td>${cellaNuvole(x.nuvole)}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteDot(x.rete)}</td>
         </tr>`
           )
           .join('')}</tbody>
@@ -487,16 +496,18 @@ ${
 ${blocco}
 <table><thead><tr>
   <th>#</th><th>ora</th><th>tempo parz/tot</th><th>km parz/tot</th><th>quota</th>
-  <th>pend.</th><th>T</th><th>percepita</th><th>raffiche km/h</th><th>prob. pioggia</th><th>mm</th><th>rete</th>
+  <th>pend.</th><th>T</th><th>percepita</th><th>raffiche km/h</th><th>nuvole/base m</th><th>prob. pioggia</th><th>mm</th><th>rete</th>
 </tr></thead><tbody>
 ${righe
   .map(
     (x) => `<tr><td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
-<td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td><td>${x.raff}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteTesto(x.rete)}</td></tr>`
+<td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td><td>${x.raff}</td><td>${x.nuvolePdf}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteTesto(x.rete)}</td></tr>`
   )
   .join('')}
 </tbody></table>
-<p class="pie">Colonna «rete»: stima copertura Vodafone da OpenCelliD
+<p class="pie">Colonna «nuvole/base»: copertura nuvolosa e quota base delle nubi in m slm
+(~ = base stimata dal livello di condensazione; IN NUBE = base sotto il sentiero).
+Colonna «rete»: stima copertura Vodafone da OpenCelliD
 (sì = cella entro 2 km, ? = entro 6 km, no = oltre) — indicazione, non garanzia.</p>
 <p class="pie">Meteo Trek — previsione generata ${escapeHtml(
       formattaOra(new Date(r.generatoIl), r.tz)

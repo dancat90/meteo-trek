@@ -227,6 +227,7 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
 .forbice-media { color: #f2cc60; }
 .forbice-ampia { color: #da3633; }
 .neve { color: var(--accento); }
+.in-nube { color: #f2cc60; font-weight: 700; }
 
 /* ── Aree protette ── */
 .aree-protette {

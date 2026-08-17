@@ -1,0 +1,31 @@
+// ─────────────────────────────────────────────────────────────────────────
+// Copertura nuvolosa e quota della base delle nubi. Modulo puro.
+//
+// Base nuvolosa: il valore nativo del modello quando esiste (variabile
+// cloud_base, oggi solo MeteoSwiss ICON-CH2 — quota sul livello del
+// mare, VERIFICATO empiricamente: celle adiacenti a 272 e 1946 m danno
+// la stessa base). Altrove stima LCL (livello di condensazione):
+// ~125 m di risalita per ogni grado di scarto fra temperatura e punto
+// di rugiada, sopra la quota del sentiero. La stima è buona per nubi
+// convettive, indicativa per quelle stratificate: dichiarata in UI.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Punto di rugiada [°C] da temperatura e umidità relativa (Magnus)
+export function puntoRugiada(tC, rh) {
+  if (!Number.isFinite(tC) || !Number.isFinite(rh) || rh <= 0) return null;
+  const g = Math.log(Math.min(100, rh) / 100) + (17.625 * tC) / (243.04 + tC);
+  return (243.04 * g) / (17.625 - g);
+}
+
+// Base nuvolosa in metri sul livello del mare, oppure null con cielo
+// quasi sereno (base senza senso) o ingressi mancanti.
+// Restituisce { baseM, stima } — stima=true quando è LCL, non modello.
+export function baseNuvolosa({ baseModelloM, tC, rh, quotaM, coperturaPct }) {
+  if (!Number.isFinite(coperturaPct) || coperturaPct < 10) return null;
+  if (Number.isFinite(baseModelloM) && baseModelloM > 0) {
+    return { baseM: Math.round(baseModelloM), stima: false };
+  }
+  const td = puntoRugiada(tC, rh);
+  if (td === null || !Number.isFinite(quotaM)) return null;
+  return { baseM: Math.round(quotaM + 125 * Math.max(0, tC - td)), stima: true };
+}

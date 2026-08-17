@@ -45,6 +45,7 @@ import { percepita, utciDaValori } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
 import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
 import { puntiSonda, abbinaRegole } from '../js/api/areeprotette.js';
+import { puntoRugiada, baseNuvolosa } from '../js/nuvole.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -540,6 +541,21 @@ console.log('── Copertura Vodafone (stima OpenCelliD) ──');
   const mare = stimaRete(g, { lat: 40.2, lon: 11.5 });
   test('Tirreno aperto → assente', mare.classe === 'assente', JSON.stringify(mare));
   test('Tirreno aperto: nemmeno altre reti', mare.emergenzaAltraRete === false);
+}
+
+console.log('── Nuvole (base nuvolosa) ──');
+{
+  test('rugiada satura = T', vicino(puntoRugiada(20, 100), 20, 0.01));
+  test('rugiada 20°/50% ≈ 9,3°', vicino(puntoRugiada(20, 50), 9.3, 0.2), String(puntoRugiada(20, 50)));
+  test('rugiada senza dati → null', puntoRugiada(null, 50) === null && puntoRugiada(20, 0) === null);
+
+  const modello = baseNuvolosa({ baseModelloM: 3200, tC: 10, rh: 80, quotaM: 2000, coperturaPct: 80 });
+  test('base dal modello quando c\'è', modello.baseM === 3200 && modello.stima === false);
+  test('sereno → base null', baseNuvolosa({ baseModelloM: 3200, tC: 10, rh: 80, quotaM: 2000, coperturaPct: 5 }) === null);
+  const stima = baseNuvolosa({ baseModelloM: null, tC: 15, rh: 70, quotaM: 2000, coperturaPct: 80 });
+  test('stima LCL ≈ quota + 125·spread', stima.stima === true && vicino(stima.baseM, 2680, 40), String(stima.baseM));
+  const saturo = baseNuvolosa({ baseModelloM: null, tC: 8, rh: 100, quotaM: 1500, coperturaPct: 100 });
+  test('aria satura → base alla quota (nebbia)', vicino(saturo.baseM, 1500, 5), String(saturo.baseM));
 }
 
 console.log('── Aree protette (regole cani) ──');

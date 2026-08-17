@@ -35,6 +35,19 @@ const num = (v, dec = 0, unita = '') =>
 // Senza fascia (meno di 2 modelli) resta il valore secco del primario.
 const CLASSE_ACCORDO = { alta: 'forbice-ok', media: 'forbice-media', bassa: 'forbice-ampia' };
 
+// Cella nuvolosità: percentuale + quota base (~ = stima LCL, senza
+// tilde = valore del modello); «in nube» quando la base è sotto il tratto
+export function cellaNuvole(n) {
+  if (!n || !Number.isFinite(n.coperturaPct)) return '–';
+  let base = '';
+  if (Number.isFinite(n.baseM)) {
+    base = n.inNube
+      ? ' <span class="forbice in-nube">in nube</span>'
+      : ` <span class="forbice">${n.stima ? '~' : ''}${n.baseM} m</span>`;
+  }
+  return `${Math.round(n.coperturaPct)}%${base}`;
+}
+
 // Pallino della stima copertura Vodafone (OpenCelliD)
 const COLORE_RETE = { probabile: '#2ea043', incerta: '#f2cc60', assente: '#da3633' };
 function cellaRete(rete) {
@@ -61,7 +74,7 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
     <tr>
       <th>km</th><th>ora</th><th>quota</th><th>T</th><th>perc.</th>
       <th>vento<br>${uVento}</th><th>raffiche<br>${uVento}</th><th>umid.</th>
-      <th>sole<br>W/m²</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
+      <th>sole<br>W/m²</th><th>nuvole<br>base</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
     </tr>`;
 
   const righe = campioni
@@ -110,12 +123,13 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
           <td>${vFmt(v.wind_gusts_10m)}</td>
           <td>${num(v.relative_humidity_2m, 0, '%')}</td>
           <td>${num(v.shortwave_radiation, 0)}</td>
+          <td>${cellaNuvole(c.nuvole)}</td>
           <td>${pop}</td>
           <td>${mm}</td>
           <td>${rischioHtml}</td>
           <td>${cellaRete(c.rete)}</td>
         </tr>
-        <tr class="riga-dettagli" hidden><td colspan="13">${dettagli}</td></tr>`;
+        <tr class="riga-dettagli" hidden><td colspan="14">${dettagli}</td></tr>`;
     })
     .join('');
 
@@ -142,7 +156,13 @@ function righeDettaglio(c, vFmt, uVento) {
   const parti = [];
   const wmo = descriviWmo(v.weather_code);
   if (wmo) parti.push(`<strong>${wmo}</strong>${v.is_day === 0 ? ' (notte)' : ''}`);
-  if (Number.isFinite(v.cloud_cover)) parti.push(`nuvolosità ${Math.round(v.cloud_cover)}%`);
+  if (Number.isFinite(v.cloud_cover)) {
+    let nb = '';
+    if (Number.isFinite(c.nuvole?.baseM)) {
+      nb = `, base ${c.nuvole.stima ? 'stimata ~' : ''}${c.nuvole.baseM} m slm${c.nuvole.inNube ? ' — TRATTO IN NUBE' : ''}`;
+    }
+    parti.push(`nuvolosità ${Math.round(v.cloud_cover)}%${nb}`);
+  }
   if (Number.isFinite(v.uv_index)) parti.push(`UV ${v.uv_index.toFixed(1)}`);
   if (Number.isFinite(v.wind_direction_10m))
     parti.push(`vento da ${Math.round(v.wind_direction_10m)}°`);

@@ -172,6 +172,9 @@ export const VARIABILI_PRIMARIO = [
   'direct_radiation',
   'direct_normal_irradiance',
   'terrestrial_radiation',
+  // Base nuvolosa nativa (oggi la fornisce solo MeteoSwiss ICON-CH2:
+  // gli altri modelli rispondono null e si passa alla stima LCL)
+  'cloud_base',
 ];
 
 // Ingressi minimi dell'UTCI per modello (fascia della percepita)

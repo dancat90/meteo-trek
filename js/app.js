@@ -22,6 +22,7 @@ import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
 import { percepita, utciDaValori, FONTE_UTCI, FONTE_STEADMAN } from './percepita.js';
 import { giornoAnnoUtc } from './radiante.js';
 import { windchillC, classeCongelamento } from './windchill.js';
+import { baseNuvolosa } from './nuvole.js';
 import { puntiControllo } from './marcia.js';
 import { caricaGriglia, stimaRete } from './copertura.js';
 import { areeConRegole } from './api/areeprotette.js';
@@ -497,6 +498,7 @@ async function calcolaPrevisione(percorsoIn) {
   let trattiQuotaLontana = 0;
   let trattiCongelamento = 0;
   let trattiSenzaRete = 0;
+  let trattiInNube = 0;
   let forbiceAmpia = false;
   for (let i = 0; i < campioni.length; i++) {
     const c = campioni[i];
@@ -580,6 +582,31 @@ async function calcolaPrevisione(percorsoIn) {
       if (rete.classe === 'assente') trattiSenzaRete++;
     }
 
+    // Nuvolosità: percentuale + quota base (modello o stima LCL) e
+    // segnalazione dei tratti dentro la nube
+    let nuvole = null;
+    if (Number.isFinite(valori.cloud_cover)) {
+      const base = baseNuvolosa({
+        baseModelloM: valori.cloud_base,
+        tC: valori.temperature_2m,
+        rh: valori.relative_humidity_2m,
+        quotaM: c.eleM,
+        coperturaPct: valori.cloud_cover,
+      });
+      const inNube =
+        base != null &&
+        Number.isFinite(c.eleM) &&
+        base.baseM <= c.eleM &&
+        valori.cloud_cover >= 50;
+      nuvole = {
+        coperturaPct: valori.cloud_cover,
+        baseM: base?.baseM ?? null,
+        stima: base?.stima ?? null,
+        inNube,
+      };
+      if (inNube) trattiInNube++;
+    }
+
     const quotaCella = quotaCelleArr?.[i] ?? null;
     if (
       p &&
@@ -635,6 +662,7 @@ async function calcolaPrevisione(percorsoIn) {
       precip15Max: p?.precip15Max ?? d2Res?.perCampione?.[i]?.precip15Max ?? null,
       windchill: wc == null ? null : { gradi: wc, ...congelamento },
       rete,
+      nuvole,
       fontePercepita: usaUtci ? FONTE_UTCI : FONTE_STEADMAN,
       senzaDati: !p,
     });
@@ -655,6 +683,11 @@ async function calcolaPrevisione(percorsoIn) {
   if (trattiSenzaRete) {
     avvisi.push(
       `Rete Vodafone probabilmente assente su ${trattiSenzaRete} tratti (stima OpenCelliD): avvisa qualcuno del giro prima di partire`
+    );
+  }
+  if (trattiInNube) {
+    avvisi.push(
+      `Base delle nubi sotto il sentiero su ${trattiInNube} tratti: possibile marcia in nebbia, orientati con traccia GPS`
     );
   }
   const senzaDati = arricchiti.filter((a) => a.senzaDati).length;
