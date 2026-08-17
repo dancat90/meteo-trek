@@ -46,6 +46,7 @@ import { puntiControllo } from '../js/marcia.js';
 import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
 import { puntiSonda, abbinaRegole } from '../js/api/areeprotette.js';
 import { puntoRugiada, baseNuvolosa } from '../js/nuvole.js';
+import { estraiTour, estraiTourId } from '../js/api/komoot.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -541,6 +542,20 @@ console.log('── Copertura Vodafone (stima OpenCelliD) ──');
   const mare = stimaRete(g, { lat: 40.2, lon: 11.5 });
   test('Tirreno aperto → assente', mare.classe === 'assente', JSON.stringify(mare));
   test('Tirreno aperto: nemmeno altre reti', mare.emergenzaAltraRete === false);
+}
+
+console.log('── Link Komoot (tour e smart tour) ──');
+{
+  const classico = estraiTour('https://www.komoot.com/tour/123456');
+  test('tour classico', classico.id === '123456' && classico.smart === false);
+  const lingua = estraiTour('https://www.komoot.com/it-it/tour/123456?share=x');
+  test('tour con prefisso lingua', lingua.id === '123456' && lingua.smart === false);
+  const smart = estraiTour(
+    'https://www.komoot.com/it-it/smarttour/20476259?ref=wdd&t_s=referral&t_cid=route_share&t_ref_username=3810961348669'
+  );
+  test('smart tour (link reale utente)', smart.id === '20476259' && smart.smart === true, JSON.stringify(smart));
+  test('input non URL → null', estraiTour('ciao') === null && estraiTour('') === null);
+  test('wrapper storico invariato', estraiTourId('https://www.komoot.com/tour/9') === '9');
 }
 
 console.log('── Nuvole (base nuvolosa) ──');

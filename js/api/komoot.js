@@ -1,8 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────
-// Lettura anonima dei tour pianificati PUBBLICI di un utente Komoot via
-// API v007 (non documentata ma stabile e con CORS aperto, verificata
-// il 16/08/2026). Il paywall Komoot colpisce solo l'export .gpx: il JSON
-// delle coordinate resta libero per i tour pubblici.
+// Lettura anonima dei tour PUBBLICI Komoot via API v007 (non documentata
+// ma stabile e con CORS aperto, verificata il 16/08/2026): tour
+// pianificati di un utente (`tours`) e smart tour suggeriti
+// (`smart_tours`, verificato il 17/08/2026 — il path dei tour classici
+// risponde 406 sugli id smart). Il paywall Komoot colpisce solo
+// l'export .gpx: il JSON delle coordinate resta libero.
 // Se l'endpoint cambia, l'app degrada all'upload GPX manuale.
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -35,11 +37,21 @@ export function estraiUserId(input) {
   return s;
 }
 
-// Estrae l'id tour da un URL komoot.com/tour/123456 (o smart tour link)
-export function estraiTourId(input) {
-  const m = String(input || '').match(/tour\/(\d+)/);
-  return m ? m[1] : null;
+// Estrae id e tipo da un URL tour: komoot.com/tour/123456 (pianificato)
+// oppure komoot.com/it-it/smarttour/123456 (smart tour suggerito, che
+// vive su un endpoint diverso). Restituisce { id, smart } o null.
+export function estraiTour(input) {
+  const m = String(input || '').match(/(smarttour|tour)\/(\d+)/i);
+  return m ? { id: m[2], smart: m[1].toLowerCase() === 'smarttour' } : null;
 }
+
+// Wrapper storico: solo l'id (compatibilità)
+export function estraiTourId(input) {
+  return estraiTour(input)?.id ?? null;
+}
+
+// Base path per tipo di tour
+const baseTour = (smart) => (smart ? 'smart_tours' : 'tours');
 
 // Elenco dei tour pianificati pubblici: [{id, nome, km, sport, dPlusM}]
 export async function elencaTourPianificati(userId, fetchFn = fetch) {
@@ -65,9 +77,12 @@ export async function elencaTourPianificati(userId, fetchFn = fetch) {
   return tours;
 }
 
-// Coordinate di un tour: items [{lat, lng, alt, t}]
-export async function coordinateTour(tourId, fetchFn = fetch) {
-  const dati = await fetchJson(`${API.komoot}/tours/${tourId}/coordinates`, fetchFn);
+// Coordinate di un tour (pianificato o smart): items [{lat, lng, alt, t}]
+export async function coordinateTour(tourId, smart = false, fetchFn = fetch) {
+  const dati = await fetchJson(
+    `${API.komoot}/${baseTour(smart)}/${tourId}/coordinates`,
+    fetchFn
+  );
   const items = dati?.items || dati?._embedded?.items || [];
   if (!items.length) throw new Error('Tour senza coordinate (è pubblico?)');
   return items;
@@ -75,8 +90,8 @@ export async function coordinateTour(tourId, fetchFn = fetch) {
 
 // Nome e metadati di un singolo tour (per l'etichetta quando l'utente
 // incolla direttamente il link di un tour)
-export async function dettagliTour(tourId, fetchFn = fetch) {
-  const t = await fetchJson(`${API.komoot}/tours/${tourId}`, fetchFn);
+export async function dettagliTour(tourId, smart = false, fetchFn = fetch) {
+  const t = await fetchJson(`${API.komoot}/${baseTour(smart)}/${tourId}`, fetchFn);
   return {
     id: String(t.id ?? tourId),
     nome: t.name || `Tour ${tourId}`,

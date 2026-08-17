@@ -17,7 +17,7 @@ import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/
 import { meteoModello, meteoConfronto, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
 import { fascia, classeDispersione } from './dispersione.js';
 import { ensemblePrecipitazione } from './api/ensemble.js';
-import { estraiUserId, estraiTourId, elencaTourPianificati, coordinateTour, dettagliTour } from './api/komoot.js';
+import { estraiUserId, estraiTour, elencaTourPianificati, coordinateTour, dettagliTour } from './api/komoot.js';
 import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
 import { percepita, utciDaValori, FONTE_UTCI, FONTE_STEADMAN } from './percepita.js';
 import { giornoAnnoUtc } from './radiante.js';
@@ -124,9 +124,9 @@ async function caricaKomoot() {
   const mia = ++richiestaIngest;
   caricamento(true);
   try {
-    const tourId = estraiTourId(input);
-    if (tourId) {
-      await caricaTourKomoot(tourId, mia);
+    const tour = estraiTour(input);
+    if (tour) {
+      await caricaTourKomoot(tour.id, tour.smart, mia);
       return;
     }
     const userId = estraiUserId(input);
@@ -151,7 +151,7 @@ async function caricaKomoot() {
         lista.hidden = true;
         const miaClick = ++richiestaIngest;
         caricamento(true);
-        caricaTourKomoot(t.id, miaClick)
+        caricaTourKomoot(t.id, false, miaClick)
           .catch((e) =>
             mostraMessaggio(
               'errore',
@@ -170,19 +170,19 @@ async function caricaKomoot() {
   }
 }
 
-async function caricaTourKomoot(tourId, mia = null) {
+async function caricaTourKomoot(tourId, smart = false, mia = null) {
   const [dettagli, items] = await Promise.all([
-    dettagliTour(tourId).catch(() => ({ id: tourId, nome: `Tour ${tourId}` })),
-    coordinateTour(tourId),
+    dettagliTour(tourId, smart).catch(() => ({ id: tourId, nome: `Tour ${tourId}` })),
+    coordinateTour(tourId, smart),
   ]);
   if (mia !== null && mia !== richiestaIngest) return; // richiesta superata
   const percorso = percorsoDaKomoot(items, { nome: dettagli.nome });
   impostaPercorso(percorso, {
-    id: `komoot:${tourId}`,
+    id: `komoot${smart ? '-smart' : ''}:${tourId}`,
     fonte: 'komoot',
     nome: percorso.nome,
     km: percorso.totKm,
-    payload: { tourId },
+    payload: { tourId, smart },
   });
 }
 
@@ -254,7 +254,7 @@ function renderCronologia() {
       const mia = ++richiestaIngest;
       caricamento(true);
       try {
-        if (v.fonte === 'komoot') await caricaTourKomoot(v.payload.tourId, mia);
+        if (v.fonte === 'komoot') await caricaTourKomoot(v.payload.tourId, v.payload.smart === true, mia);
         else if (v.fonte === 'outdooractive') await caricaOa(v.payload.url);
         else {
           const percorso = costruisciPercorso({ nome: v.nome, fonte: 'gpx', punti: v.payload.punti });
