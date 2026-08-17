@@ -43,6 +43,10 @@ import { affidabilita, etichettaAffidabilita } from '../js/affidabilita.js';
 import { scoreCanali, fusione, canaliAttivi } from '../js/rischio.js';
 import { percepita, utciDaValori } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
+import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { albaTramontoUtc } from '../js/sole.js';
 import { windchillC, classeCongelamento } from '../js/windchill.js';
 import { mrtDiNapoli, cosszaDaToa, giornoAnnoUtc } from '../js/radiante.js';
@@ -476,6 +480,28 @@ console.log('── Radiante e UTCI ──');
   const uSenzaRad = utciDaValori({ temperature_2m: 15, relative_humidity_2m: 45 }, 200);
   test('utciDaValori null senza vento', uSenzaRad === null);
   test('percepita ripiega su Steadman senza radiazione', percepita({ apparent_temperature: 21.5 }) === 21.5);
+}
+
+console.log('── Copertura Vodafone (stima OpenCelliD) ──');
+{
+  test('classe: 1 km → probabile', classificaCopertura(1).classe === 'probabile');
+  test('classe: 2 km → probabile', classificaCopertura(2).classe === 'probabile');
+  test('classe: 4 km → incerta', classificaCopertura(4).classe === 'incerta');
+  test('classe: 6 km → incerta', classificaCopertura(6).classe === 'incerta');
+  test('classe: 6,1 km → assente', classificaCopertura(6.1).classe === 'assente');
+  test('classe: senza celle → assente', classificaCopertura(null).classe === 'assente');
+
+  // Griglia REALE inclusa nel repo (dati OpenCelliD)
+  const quiDir = dirname(fileURLToPath(import.meta.url));
+  const g = preparaGriglia(
+    JSON.parse(readFileSync(join(quiDir, '../dati/copertura-vodafone.json'), 'utf8'))
+  );
+  test('griglia: celle Vodafone caricate', g.nCelleVodafone > 10000, String(g.nCelleVodafone));
+  const roma = stimaRete(g, { lat: 41.8586, lon: 12.5505 });
+  test('Roma Capannelle → probabile', roma.classe === 'probabile', JSON.stringify(roma));
+  const mare = stimaRete(g, { lat: 40.2, lon: 11.5 });
+  test('Tirreno aperto → assente', mare.classe === 'assente', JSON.stringify(mare));
+  test('Tirreno aperto: nemmeno altre reti', mare.emergenzaAltraRete === false);
 }
 
 console.log('── Rischio ──');

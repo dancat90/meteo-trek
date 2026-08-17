@@ -34,9 +34,19 @@ function righeDati(r) {
       raff: num(v.wind_gusts_10m, 0),
       prob: num(v.precipitation_probability ?? c.ens?.popKN, 0, '%'),
       mm: num(v.precipitation, 1),
+      rete: c.rete?.classe || null,
     };
   });
 }
+
+// Stima copertura Vodafone: pallino a schermo, testo secco in PDF
+const COLORE_RETE = { probabile: '#2ea043', incerta: '#f2cc60', assente: '#da3633' };
+const TESTO_RETE = { probabile: 'sì', incerta: '?', assente: 'no' };
+const reteDot = (classe) =>
+  classe
+    ? `<span class="chip" style="background:${COLORE_RETE[classe]}" title="Vodafone ${classe}"></span>`
+    : '–';
+const reteTesto = (classe) => (classe ? TESTO_RETE[classe] : '–');
 
 function testataTramonto(r) {
   if (!r.tramontoIso) return 'tramonto non calcolabile a questa latitudine';
@@ -76,14 +86,14 @@ export function renderMarcia(el, r) {
         <thead><tr>
           <th>#</th><th>ora</th><th>tempo<br>parz/tot</th><th>km<br>parz/tot</th>
           <th>quota</th><th>pend.</th><th>T</th><th>perc.</th>
-          <th>raffiche<br>km/h</th><th>prob.</th><th>mm</th>
+          <th>raffiche<br>km/h</th><th>prob.</th><th>mm</th><th>rete</th>
         </tr></thead>
         <tbody>${righe
           .map(
             (x) => `<tr>
           <td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
           <td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td>
-          <td>${x.raff}</td><td>${x.prob}</td><td>${x.mm}</td>
+          <td>${x.raff}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteDot(x.rete)}</td>
         </tr>`
           )
           .join('')}</tbody>
@@ -127,15 +137,17 @@ ${
 }
 <table><thead><tr>
   <th>#</th><th>ora</th><th>tempo parz/tot</th><th>km parz/tot</th><th>quota</th>
-  <th>pend.</th><th>T</th><th>percepita</th><th>raffiche km/h</th><th>prob. pioggia</th><th>mm</th>
+  <th>pend.</th><th>T</th><th>percepita</th><th>raffiche km/h</th><th>prob. pioggia</th><th>mm</th><th>rete</th>
 </tr></thead><tbody>
 ${righe
   .map(
     (x) => `<tr><td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
-<td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td><td>${x.raff}</td><td>${x.prob}</td><td>${x.mm}</td></tr>`
+<td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td><td>${x.raff}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteTesto(x.rete)}</td></tr>`
   )
   .join('')}
 </tbody></table>
+<p class="pie">Colonna «rete»: stima copertura Vodafone da OpenCelliD
+(sì = cella entro 2 km, ? = entro 6 km, no = oltre) — indicazione, non garanzia.</p>
 <p class="pie">Meteo Trek — previsione generata ${escapeHtml(
     formattaOra(new Date(r.generatoIl), r.tz)
   )} (${escapeHtml(r.modello?.nome || '')}) — stima hobbistica, non sostituisce i bollettini.</p>

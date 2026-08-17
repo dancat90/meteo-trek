@@ -34,6 +34,14 @@ const num = (v, dec = 0, unita = '') =>
 // Cella con fascia multi-modello: mediana + forbice colorata per accordo.
 // Senza fascia (meno di 2 modelli) resta il valore secco del primario.
 const CLASSE_ACCORDO = { alta: 'forbice-ok', media: 'forbice-media', bassa: 'forbice-ampia' };
+
+// Pallino della stima copertura Vodafone (OpenCelliD)
+const COLORE_RETE = { probabile: '#2ea043', incerta: '#f2cc60', assente: '#da3633' };
+function cellaRete(rete) {
+  if (!rete) return '–';
+  const colore = COLORE_RETE[rete.classe] || '#8b949e';
+  return `<span class="chip" style="background:${colore}" title="Vodafone ${rete.etichetta}"></span>`;
+}
 function cellaFascia(valore, f) {
   if (!f) return num(valore, 0, '°');
   const cl = CLASSE_ACCORDO[f.accordo] || '';
@@ -53,7 +61,7 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
     <tr>
       <th>km</th><th>ora</th><th>quota</th><th>T</th><th>perc.</th>
       <th>vento<br>${uVento}</th><th>raffiche<br>${uVento}</th><th>umid.</th>
-      <th>sole<br>W/m²</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th>
+      <th>sole<br>W/m²</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
     </tr>`;
 
   const righe = campioni
@@ -105,8 +113,9 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
           <td>${pop}</td>
           <td>${mm}</td>
           <td>${rischioHtml}</td>
+          <td>${cellaRete(c.rete)}</td>
         </tr>
-        <tr class="riga-dettagli" hidden><td colspan="12">${dettagli}</td></tr>`;
+        <tr class="riga-dettagli" hidden><td colspan="13">${dettagli}</td></tr>`;
     })
     .join('');
 
@@ -147,6 +156,10 @@ function righeDettaglio(c, vFmt, uVento) {
     );
   if (c.windchill)
     parti.push(`windchill ${Math.round(c.windchill.gradi)}° — ${c.windchill.etichetta}`);
+  if (c.rete)
+    parti.push(
+      `rete Vodafone ${c.rete.etichetta}${Number.isFinite(c.rete.distKm) ? ` (cella nota a ${c.rete.distKm.toFixed(1)} km)` : ''}${c.rete.emergenzaAltraRete ? ' — altra rete vicina: chiamata 112 possibile' : ''} — stima OpenCelliD, non garanzia`
+    );
   const perModello = (c.tPerModello || []).filter((m) => Number.isFinite(m.t));
   if (perModello.length > 1) {
     parti.push(

@@ -5,7 +5,7 @@
 // tile della mappa NON passano MAI dalla cache: devono essere fresche.
 // ─────────────────────────────────────────────────────────────────────────
 
-const CACHE = 'meteo-trek-v4';
+const CACHE = 'meteo-trek-v5';
 
 const CDN_LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
 
@@ -28,6 +28,8 @@ const ASSETS = [
   './js/dispersione.js',
   './js/marcia.js',
   './js/sole.js',
+  './js/copertura.js',
+  './dati/copertura-vodafone.json',
   './js/rischio.js',
   './js/affidabilita.js',
   './js/api/meteo.js',

@@ -238,7 +238,11 @@ export const API = {
   openMeteoElevation: 'https://api.open-meteo.com/v1/elevation',
   komoot: 'https://www.komoot.com/api/v007',
   outdooractiveGpx: 'https://www.outdooractive.com/en/download.tour.gpx',
+  openCelliD: 'https://opencellid.org/cell/getInArea',
 };
+
+// Stima copertura mobile: distanza (km) dalla cella Vodafone più vicina
+export const SOGLIE_COPERTURA = { probabileKm: 2, incertaKm: 6 };
 
 // Ensemble per la probabilità di precipitazione: primario e fallback
 export const MODELLI_ENSEMBLE = ['icon_seamless', 'ecmwf_ifs025'];

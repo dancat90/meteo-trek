@@ -60,6 +60,19 @@ tratto, meteo del punto. Bottone «Esporta PDF» (stampa del browser,
 funziona offline). Calcolo del tramonto sul punto di arrivo: se
 l'arrivo previsto è a meno di 1 ora dal tramonto scatta l'avviso.
 
+## Copertura Vodafone (stima)
+
+Colonna «rete» nelle tabelle: stima della copertura Vodafone per tratto,
+da una mappa statica derivata da [OpenCelliD](https://opencellid.org/)
+(dati celle CC-BY-SA 4.0, ~118k celle note in Italia di cui ~27k
+Vodafone). Classi per distanza dalla cella nota più vicina: verde ≤2 km,
+ambra ≤6 km (dipende dall'orografia), rosso oltre. Con Vodafone assente
+ma un'altra rete vicina, il dettaglio segnala che la chiamata al 112
+resta possibile (le emergenze passano su ogni rete). **Indicazione, non
+garanzia**: il database è crowdsourced e i rilievi schermano il segnale.
+Rigenerazione mappa: scaricare il dump MCC 222 da OpenCelliD e lanciare
+`node tools/genera_copertura.mjs <222.csv>`.
+
 ## Modelli meteo
 
 - Alpi: MeteoSwiss ICON-CH2 (~2 km, 5 giorni) con confronto ICON-D2;

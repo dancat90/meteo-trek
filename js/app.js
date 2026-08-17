@@ -23,6 +23,7 @@ import { percepita, utciDaValori, FONTE_UTCI, FONTE_STEADMAN } from './percepita
 import { giornoAnnoUtc } from './radiante.js';
 import { windchillC, classeCongelamento } from './windchill.js';
 import { puntiControllo } from './marcia.js';
+import { caricaGriglia, stimaRete } from './copertura.js';
 import { albaTramontoUtc } from './sole.js';
 import { renderMarcia } from './ui/marcia.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
@@ -377,7 +378,7 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito, celleEsito, confEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
@@ -396,6 +397,8 @@ async function calcolaPrevisione(percorsoIn) {
           ...finestra,
         })
       : Promise.resolve(null),
+    // Mappa statica di copertura Vodafone (via service worker: offline ok)
+    caricaGriglia(),
   ]);
 
   // 7. Degradazioni esplicite, mai silenziose
@@ -442,6 +445,12 @@ async function calcolaPrevisione(percorsoIn) {
     avvisi.push('Modelli di confronto non disponibili: fascia di temperatura ridotta');
   }
 
+  // Copertura Vodafone: degradazione esplicita, mai silenziosa
+  const cop = copEsito.status === 'fulfilled' ? copEsito.value : null;
+  if (!cop) {
+    avvisi.push('Stima copertura Vodafone non disponibile (mappa celle non caricata)');
+  }
+
   // Quote celle: valide solo se il modello usato è rimasto il primario
   const quotaCelleArr =
     modelloUsato.id === scelta.primario.id && celleEsito.status === 'fulfilled'
@@ -471,6 +480,7 @@ async function calcolaPrevisione(percorsoIn) {
   const arricchiti = [];
   let trattiQuotaLontana = 0;
   let trattiCongelamento = 0;
+  let trattiSenzaRete = 0;
   let forbiceAmpia = false;
   for (let i = 0; i < campioni.length; i++) {
     const c = campioni[i];
@@ -547,6 +557,13 @@ async function calcolaPrevisione(percorsoIn) {
     const congelamento = classeCongelamento(wc);
     if (congelamento && congelamento.livello >= 1) trattiCongelamento++;
 
+    // Stima copertura Vodafone del tratto
+    let rete = null;
+    if (cop) {
+      rete = stimaRete(cop, { lat: c.lat, lon: c.lon });
+      if (rete.classe === 'assente') trattiSenzaRete++;
+    }
+
     const quotaCella = quotaCelleArr?.[i] ?? null;
     if (
       p &&
@@ -601,6 +618,7 @@ async function calcolaPrevisione(percorsoIn) {
       quotaCella,
       precip15Max: p?.precip15Max ?? d2Res?.perCampione?.[i]?.precip15Max ?? null,
       windchill: wc == null ? null : { gradi: wc, ...congelamento },
+      rete,
       fontePercepita: usaUtci ? FONTE_UTCI : FONTE_STEADMAN,
       senzaDati: !p,
     });
@@ -616,6 +634,11 @@ async function calcolaPrevisione(percorsoIn) {
   if (trattiCongelamento) {
     avvisi.push(
       `Windchill da congelamento su ${trattiCongelamento} tratti: copri la pelle esposta (dettaglio per tratto nella tabella)`
+    );
+  }
+  if (trattiSenzaRete) {
+    avvisi.push(
+      `Rete Vodafone probabilmente assente su ${trattiSenzaRete} tratti (stima OpenCelliD): avvisa qualcuno del giro prima di partire`
     );
   }
   const senzaDati = arricchiti.filter((a) => a.senzaDati).length;
