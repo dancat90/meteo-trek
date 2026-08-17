@@ -53,3 +53,21 @@ export function etichettaAffidabilita(pct) {
   if (pct >= 30) return 'bassa';
   return 'molto bassa';
 }
+
+// Affidabilità COMPLESSIVA della previsione: media delle percentuali
+// per tratto (solo quelle disponibili), null senza dati
+export function affidabilitaGlobale(pctPerTratto) {
+  const validi = (pctPerTratto || []).filter(Number.isFinite);
+  if (!validi.length) return null;
+  return Math.round(validi.reduce((s, x) => s + x, 0) / validi.length);
+}
+
+// Scala a 5 fasce per il badge globale, dal rosso al verde
+export function classificaAffidabilitaGlobale(pct) {
+  if (pct === null || !Number.isFinite(pct)) return null;
+  if (pct >= 85) return { etichetta: 'molto elevata', colore: '#2ea043' };
+  if (pct >= 70) return { etichetta: 'elevata', colore: '#7ee787' };
+  if (pct >= 50) return { etichetta: 'media', colore: '#f2cc60' };
+  if (pct >= 30) return { etichetta: 'bassa', colore: '#f0883e' };
+  return { etichetta: 'molto bassa', colore: '#da3633' };
+}

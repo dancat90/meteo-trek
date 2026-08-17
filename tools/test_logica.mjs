@@ -39,7 +39,7 @@ import {
   clampLat,
 } from '../js/api/meteo.js';
 import { dataLocaleAUtc, offsetMinuti, oraApiUtc } from '../js/tempo.js';
-import { affidabilita, etichettaAffidabilita } from '../js/affidabilita.js';
+import { affidabilita, etichettaAffidabilita, affidabilitaGlobale, classificaAffidabilitaGlobale } from '../js/affidabilita.js';
 import { scoreCanali, fusione, canaliAttivi } from '../js/rischio.js';
 import { percepita, utciDaValori } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
@@ -404,6 +404,16 @@ console.log('── Affidabilità ──');
   const soloLead = affidabilita({ sigmaTempC: null, diffTempC: null, diffRaffKmh: null, leadGiorni: 1 });
   test('solo lead → flag', soloLead.soloLead === true);
   test('etichetta alta', etichettaAffidabilita(80) === 'alta');
+
+  // Affidabilità complessiva della previsione (badge globale)
+  test('globale = media dei tratti', affidabilitaGlobale([80, 60, null, 70]) === 70);
+  test('globale senza dati → null', affidabilitaGlobale([null, undefined]) === null);
+  test('fascia 85 → molto elevata verde', classificaAffidabilitaGlobale(85).etichetta === 'molto elevata' && classificaAffidabilitaGlobale(85).colore === '#2ea043');
+  test('fascia 70 → elevata', classificaAffidabilitaGlobale(70).etichetta === 'elevata');
+  test('fascia 50 → media', classificaAffidabilitaGlobale(50).etichetta === 'media');
+  test('fascia 30 → bassa', classificaAffidabilitaGlobale(30).etichetta === 'bassa');
+  test('fascia 29 → molto bassa rossa', classificaAffidabilitaGlobale(29).colore === '#da3633');
+  test('fascia null → null', classificaAffidabilitaGlobale(null) === null);
 }
 
 console.log('── Tabella di marcia e tramonto ──');

@@ -29,7 +29,7 @@ import { areeConRegole } from './api/areeprotette.js';
 import { albaTramontoUtc } from './sole.js';
 import { renderMarcia } from './ui/marcia.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
-import { affidabilita, etichettaAffidabilita } from './affidabilita.js';
+import { affidabilita, etichettaAffidabilita, affidabilitaGlobale } from './affidabilita.js';
 import { initMappa, disegnaTraccia, evidenziaCampione, pulisciTraccia, escapeHtml } from './ui/mappa.js';
 import { renderProfilo, evidenziaProfilo } from './ui/profilo.js';
 import { renderTabella, evidenziaRiga, descriviWmo } from './ui/tabella.js';
@@ -801,6 +801,7 @@ async function calcolaPrevisione(percorsoIn) {
     secondarioNome: sec ? scelta.secondario.nome : null,
     ensembleNome: ens?.modello || null,
     avvisi,
+    affGlobalePct: affidabilitaGlobale(arricchiti.map((a) => a.aff?.pct)),
     campioni: arricchiti,
     traccia: tracciaRidotta(percorso),
     tacche,
@@ -861,7 +862,7 @@ function render(r) {
     },
     selezionaCampione
   );
-  renderTabella($('tabella'), { campioni: r.campioni, unitaVento: r.unitaVento }, selezionaCampione);
+  renderTabella($('tabella'), { campioni: r.campioni, unitaVento: r.unitaVento, affGlobalePct: r.affGlobalePct }, selezionaCampione);
   renderMarcia($('marcia'), r);
 }
 

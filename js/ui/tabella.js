@@ -6,6 +6,7 @@
 
 import { COLORI_SEVERITA, ETICHETTE_RISCHIO } from '../config.js';
 import { intensitaSolare } from '../nuvole.js';
+import { classificaAffidabilitaGlobale } from '../affidabilita.js';
 import { escapeHtml } from './mappa.js';
 
 // Descrizioni italiane dei weather code WMO
@@ -84,7 +85,7 @@ function cellaFascia(valore, f) {
 
 // campioni: voci arricchite (vedi app.js assemblaCampioni)
 // unitaVento: 'kmh' | 'ms'
-export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) {
+export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }, onSelezione = null) {
   selezioneCb = onSelezione;
   const inMs = unitaVento === 'ms';
   const vFmt = (kmh) =>
@@ -155,7 +156,17 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
     })
     .join('');
 
-  el.innerHTML = `<div class="contenitore-tabella"><table class="tratti">
+  // Badge dell'affidabilità complessiva (media dei tratti), dal rosso
+  // al verde. Assente sui risultati salvati prima della funzione.
+  const affG = classificaAffidabilitaGlobale(affGlobalePct);
+  const badgeAff = affG
+    ? `<div class="affidabilita-globale">Affidabilità della previsione:
+        <span class="valore" style="background:${affG.colore}">${affGlobalePct}% — ${affG.etichetta}</span>
+        <span class="forbice">media dei tratti: accordo fra modelli, ensemble e distanza nel tempo</span>
+      </div>`
+    : '';
+
+  el.innerHTML = `${badgeAff}<div class="contenitore-tabella"><table class="tratti">
     <thead>${testata}</thead><tbody>${righe}</tbody></table></div>`;
   el.hidden = false;
 
