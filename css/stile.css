@@ -201,11 +201,20 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .profilo-tacca { fill: var(--testo-secondario); font-size: 10px; }
 .profilo-asse { stroke: var(--bordo); stroke-width: 1; }
 
+/* ── Sezione risultati a tutta larghezza ──
+   Il form resta a 860px, ma mappa e tabelle escono dal contenitore
+   fino a 1500px centrati: le 15 colonne entrano senza scorrimento
+   sugli schermi da desktop (sul telefono resta lo scroll laterale) */
+#sezione-risultato {
+  width: min(96vw, 1500px);
+  margin-left: calc(50% - min(48vw, 750px));
+}
+
 /* ── Tabella per tratto ── */
 .contenitore-tabella { overflow-x: auto; margin: 14px 0; border: 1px solid var(--bordo); border-radius: 12px; }
 table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 0.85rem; }
 .tratti th, .tratti td {
-  padding: 7px 8px;
+  padding: 6px 7px;
   text-align: right;
   border-bottom: 1px solid var(--bordo);
   white-space: nowrap;
