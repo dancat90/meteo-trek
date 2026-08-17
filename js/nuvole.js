@@ -10,7 +10,32 @@
 // convettive, indicativa per quelle stratificate: dichiarata in UI.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { SOGLIE_SOLE, ETICHETTE_SOLE } from './config.js';
+import {
+  SOGLIE_SOLE,
+  ETICHETTE_SOLE,
+  SOGLIE_VISIBILITA_KM,
+  ETICHETTE_VISIBILITA,
+} from './config.js';
+
+// Piano di nubi dominante: 'basse' | 'medie' | 'alte', null se il cielo
+// è quasi sereno (<30% totale) o i piani mancano. In pareggio vince il
+// piano più basso (lettura prudente per chi cammina).
+export function tipologiaNubi({ basse, medie, alte, totale }) {
+  if (!Number.isFinite(totale) || totale < 30) return null;
+  if (![basse, medie, alte].every(Number.isFinite)) return null;
+  if (basse >= medie && basse >= alte) return 'basse';
+  if (medie >= alte) return 'medie';
+  return 'alte';
+}
+
+// Classe di visibilità dai metri previsti (fonte tipica: GFS)
+export function classificaVisibilita(metri) {
+  if (!Number.isFinite(metri) || metri < 0) return null;
+  const km = metri / 1000;
+  let livello = 0;
+  while (livello < SOGLIE_VISIBILITA_KM.length && km >= SOGLIE_VISIBILITA_KM[livello]) livello++;
+  return { km, livello, etichetta: ETICHETTE_VISIBILITA[livello] };
+}
 
 // Intensità solare qualitativa dalla radiazione globale al suolo:
 // il filtro delle nubi è già dentro il valore previsto dal modello

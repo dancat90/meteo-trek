@@ -36,17 +36,37 @@ const num = (v, dec = 0, unita = '') =>
 // Senza fascia (meno di 2 modelli) resta il valore secco del primario.
 const CLASSE_ACCORDO = { alta: 'forbice-ok', media: 'forbice-media', bassa: 'forbice-ampia' };
 
-// Cella nuvolosità: percentuale + quota base (~ = stima LCL, senza
-// tilde = valore del modello); «in nube» quando la base è sotto il tratto
+// Cella sole: intensità qualitativa, con «(velato)» quando il sole resta
+// forte sotto una copertura quasi totale (velo alto luminoso)
+export function cellaSole(wm2, coperturaPct) {
+  const s = intensitaSolare(wm2);
+  if (!s) return '–';
+  const velato = s.livello >= 3 && Number.isFinite(coperturaPct) && coperturaPct >= 80;
+  return velato ? `${s.etichetta} <span class="forbice">(velato)</span>` : s.etichetta;
+}
+
+// Cella nuvolosità: percentuale + piano dominante (basse/medie/alte) +
+// quota base (~ = stima LCL, senza tilde = valore del modello);
+// «in nube» quando la base è sotto il tratto con nubi basse consistenti
 export function cellaNuvole(n) {
   if (!n || !Number.isFinite(n.coperturaPct)) return '–';
+  const piano = n.tipologia ? ` <span class="forbice">${n.tipologia}</span>` : '';
   let base = '';
   if (Number.isFinite(n.baseM)) {
     base = n.inNube
       ? ' <span class="forbice in-nube">in nube</span>'
       : ` <span class="forbice">${n.stima ? '~' : ''}${n.baseM} m</span>`;
   }
-  return `${Math.round(n.coperturaPct)}%${base}`;
+  return `${Math.round(n.coperturaPct)}%${piano}${base}`;
+}
+
+// Cella visibilità: compatta in km (o metri sotto il chilometro),
+// con enfasi quando scende sotto i 4 km
+export function cellaVisibilita(vis) {
+  if (!vis || !Number.isFinite(vis.km)) return '–';
+  const testo =
+    vis.km < 1 ? `${Math.round(vis.km * 1000)} m` : vis.km < 10 ? `${vis.km.toFixed(1)} km` : `${Math.round(vis.km)} km`;
+  return vis.km < 4 ? `<span class="in-nube">${testo}</span>` : testo;
 }
 
 // Pallino della stima copertura Vodafone (OpenCelliD)
@@ -75,7 +95,7 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
     <tr>
       <th>km</th><th>ora</th><th>quota</th><th>T</th><th>perc.</th>
       <th>vento<br>${uVento}</th><th>raffiche<br>${uVento}</th><th>umid.</th>
-      <th>sole</th><th>nuvole<br>base</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
+      <th>sole</th><th>nuvole<br>base</th><th>visib.</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
     </tr>`;
 
   const righe = campioni
@@ -123,14 +143,15 @@ export function renderTabella(el, { campioni, unitaVento }, onSelezione = null) 
           <td>${vFmt(v.wind_speed_10m)}</td>
           <td>${vFmt(v.wind_gusts_10m)}</td>
           <td>${num(v.relative_humidity_2m, 0, '%')}</td>
-          <td>${intensitaSolare(v.shortwave_radiation)?.etichetta ?? '–'}</td>
+          <td>${cellaSole(v.shortwave_radiation, v.cloud_cover)}</td>
           <td>${cellaNuvole(c.nuvole)}</td>
+          <td>${cellaVisibilita(c.visibilita)}</td>
           <td>${pop}</td>
           <td>${mm}</td>
           <td>${rischioHtml}</td>
           <td>${cellaRete(c.rete)}</td>
         </tr>
-        <tr class="riga-dettagli" hidden><td colspan="14">${dettagli}</td></tr>`;
+        <tr class="riga-dettagli" hidden><td colspan="15">${dettagli}</td></tr>`;
     })
     .join('');
 
@@ -163,6 +184,19 @@ function righeDettaglio(c, vFmt, uVento) {
       nb = `, base ${c.nuvole.stima ? 'stimata ~' : ''}${c.nuvole.baseM} m slm${c.nuvole.inNube ? ' — TRATTO IN NUBE' : ''}`;
     }
     parti.push(`nuvolosità ${Math.round(v.cloud_cover)}%${nb}`);
+    if (Number.isFinite(c.nuvole?.bassePct)) {
+      parti.push(
+        `nubi basse ${Math.round(c.nuvole.bassePct)}% / medie ${Math.round(c.nuvole.mediePct ?? 0)}% / alte ${Math.round(c.nuvole.altePct ?? 0)}%`
+      );
+    }
+  }
+  if (c.visibilita) {
+    parti.push(
+      `visibilità ${c.visibilita.km < 1 ? Math.round(c.visibilita.km * 1000) + ' m' : c.visibilita.km.toFixed(1) + ' km'} (${c.visibilita.etichetta}, ${escapeHtml(c.visibilita.fonte || 'GFS')})`
+    );
+  }
+  if (Number.isFinite(v.relative_humidity_2m) && v.relative_humidity_2m >= 95) {
+    parti.push('UR ≥95%: possibile foschia o nebbia locale che i modelli larghi non vedono');
   }
   if (Number.isFinite(v.shortwave_radiation))
     parti.push(`sole ${Math.round(v.shortwave_radiation)} W/m²`);

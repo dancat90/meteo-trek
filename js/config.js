@@ -175,6 +175,11 @@ export const VARIABILI_PRIMARIO = [
   // Base nuvolosa nativa (oggi la fornisce solo MeteoSwiss ICON-CH2:
   // gli altri modelli rispondono null e si passa alla stima LCL)
   'cloud_base',
+  // Piani di nubi: distinguono il velo alto (innocuo per il cammino)
+  // dalle nubi basse (possibile marcia in nube)
+  'cloud_cover_low',
+  'cloud_cover_mid',
+  'cloud_cover_high',
 ];
 
 // Ingressi minimi dell'UTCI per modello (fascia della percepita)
@@ -202,6 +207,9 @@ export const VARIABILI_CONFRONTO = [
   'temperature_2m',
   'apparent_temperature',
   'wind_speed_10m',
+  // Visibilità prevista: la fornisce GFS (ECMWF risponde null, innocuo);
+  // i modelli primari non ce l'hanno, quindi viaggia in questa chiamata
+  'visibility',
   ...VARIABILI_UTCI,
 ];
 
@@ -258,6 +266,10 @@ export const SOGLIE_COPERTURA = { probabileKm: 2, incertaKm: 6 };
 // estivo sereno ~850-1000, invernale sereno ~400-500, coperto ~50-150.
 export const SOGLIE_SOLE = [10, 150, 400, 700];
 export const ETICHETTE_SOLE = ['nulla', 'scarsa', 'media', 'forte', 'molto forte'];
+
+// Visibilità prevista (km): soglie di classe (scala aeronautica ridotta)
+export const SOGLIE_VISIBILITA_KM = [1, 4, 10, 20];
+export const ETICHETTE_VISIBILITA = ['scarsa', 'ridotta', 'discreta', 'buona', 'ottima'];
 
 // Ensemble per la probabilità di precipitazione: primario e fallback
 export const MODELLI_ENSEMBLE = ['icon_seamless', 'ecmwf_ifs025'];

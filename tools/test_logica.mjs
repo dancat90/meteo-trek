@@ -45,7 +45,8 @@ import { percepita, utciDaValori } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
 import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
 import { puntiSonda, abbinaRegole } from '../js/api/areeprotette.js';
-import { puntoRugiada, baseNuvolosa, intensitaSolare } from '../js/nuvole.js';
+import { puntoRugiada, baseNuvolosa, intensitaSolare, tipologiaNubi, classificaVisibilita } from '../js/nuvole.js';
+import { cellaSole, cellaNuvole } from '../js/ui/tabella.js';
 import { cronologiaAggiungi, cronologiaLeggi, cronologiaRimuovi, cronologiaSvuota } from '../js/storage.js';
 import { estraiTour, estraiTourId } from '../js/api/komoot.js';
 import { readFileSync } from 'node:fs';
@@ -581,6 +582,27 @@ console.log('── Nuvole (base nuvolosa) ──');
   test('sole 700 → molto forte', intensitaSolare(700).etichetta === 'molto forte');
   test('sole 950 → molto forte', intensitaSolare(950).livello === 4);
   test('sole senza dato → null', intensitaSolare(null) === null);
+
+  // Piano di nubi dominante
+  test('velo di cirri → alte', tipologiaNubi({ basse: 49, medie: 0, alte: 100, totale: 100 }) === 'alte');
+  test('strato basso → basse', tipologiaNubi({ basse: 90, medie: 10, alte: 20, totale: 95 }) === 'basse');
+  test('pareggio → basse (prudente)', tipologiaNubi({ basse: 50, medie: 20, alte: 50, totale: 80 }) === 'basse');
+  test('quasi sereno → null', tipologiaNubi({ basse: 10, medie: 5, alte: 10, totale: 20 }) === null);
+  test('piani mancanti → null', tipologiaNubi({ basse: null, medie: 0, alte: 0, totale: 90 }) === null);
+
+  // Visibilità
+  test('500 m → scarsa', classificaVisibilita(500).etichetta === 'scarsa');
+  test('1 km → ridotta', classificaVisibilita(1000).etichetta === 'ridotta');
+  test('4 km → discreta', classificaVisibilita(4000).etichetta === 'discreta');
+  test('10 km → buona', classificaVisibilita(10000).etichetta === 'buona');
+  test('24 km → ottima', classificaVisibilita(24100).etichetta === 'ottima');
+  test('visibilità senza dato → null', classificaVisibilita(null) === null);
+
+  // Cella sole: (velato) solo con sole forte sotto copertura quasi totale
+  test('forte + 99% → velato', cellaSole(500, 99).includes('velato'));
+  test('forte + 50% → niente velato', !cellaSole(500, 50).includes('velato'));
+  test('media + 99% → niente velato', !cellaSole(200, 99).includes('velato'));
+  test('cella nuvole porta il piano', cellaNuvole({ coperturaPct: 97, tipologia: 'alte', baseM: 4500, stima: false, inNube: false }).includes('alte'));
 }
 
 console.log('── Cronologia (rimozione voce) ──');

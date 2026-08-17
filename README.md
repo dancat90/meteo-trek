@@ -5,7 +5,10 @@ previsto **tratto per tratto** lungo un percorso di trekking, **all'orario
 in cui ci passerai**: temperatura, percepita, umidità, vento e raffiche,
 intensità solare a 5 livelli (nulla &lt; 10 W/m² &lt; scarsa &lt; 150 &lt; media
 &lt; 400 &lt; forte &lt; 700 &lt; molto forte, valore già filtrato dalle nubi
-previste — W/m² e UV nel dettaglio), nuvolosità con quota della base delle nubi
+previste, «(velato)» quando resta forte sotto un velo quasi totale —
+W/m² e UV nel dettaglio), visibilità prevista (fonte GFS, con classi
+scarsa/ridotta/discreta/buona/ottima e avviso sotto 1 km), nuvolosità
+con piano dominante (basse/medie/alte) e quota della base delle nubi
 (dal modello dove disponibile — MeteoSwiss sulle Alpi — altrimenti
 stima dal livello di condensazione, marcata con «~»; «in nube» quando
 la base è sotto il sentiero), probabilità e quantità di precipitazione,

@@ -22,7 +22,7 @@ import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
 import { percepita, utciDaValori, FONTE_UTCI, FONTE_STEADMAN } from './percepita.js';
 import { giornoAnnoUtc } from './radiante.js';
 import { windchillC, classeCongelamento } from './windchill.js';
-import { baseNuvolosa } from './nuvole.js';
+import { baseNuvolosa, tipologiaNubi, classificaVisibilita } from './nuvole.js';
 import { puntiControllo } from './marcia.js';
 import { caricaGriglia, stimaRete } from './copertura.js';
 import { areeConRegole } from './api/areeprotette.js';
@@ -515,6 +515,7 @@ async function calcolaPrevisione(percorsoIn) {
   let trattiCongelamento = 0;
   let trattiSenzaRete = 0;
   let trattiInNube = 0;
+  let trattiVisibilitaScarsa = 0;
   let forbiceAmpia = false;
   for (let i = 0; i < campioni.length; i++) {
     const c = campioni[i];
@@ -598,8 +599,8 @@ async function calcolaPrevisione(percorsoIn) {
       if (rete.classe === 'assente') trattiSenzaRete++;
     }
 
-    // Nuvolosità: percentuale + quota base (modello o stima LCL) e
-    // segnalazione dei tratti dentro la nube
+    // Nuvolosità: percentuale, piano dominante (basse/medie/alte), quota
+    // base (modello o stima LCL) e segnalazione dei tratti dentro la nube
     let nuvole = null;
     if (Number.isFinite(valori.cloud_cover)) {
       const base = baseNuvolosa({
@@ -609,19 +610,43 @@ async function calcolaPrevisione(percorsoIn) {
         quotaM: c.eleM,
         coperturaPct: valori.cloud_cover,
       });
+      // «In nube» solo con nubi BASSE consistenti: il velo di cirri
+      // copre il cielo ma non avvolge il sentiero
+      const bassePct = valori.cloud_cover_low;
       const inNube =
         base != null &&
         Number.isFinite(c.eleM) &&
         base.baseM <= c.eleM &&
-        valori.cloud_cover >= 50;
+        (Number.isFinite(bassePct) ? bassePct >= 40 : valori.cloud_cover >= 50);
       nuvole = {
         coperturaPct: valori.cloud_cover,
+        tipologia: tipologiaNubi({
+          basse: valori.cloud_cover_low,
+          medie: valori.cloud_cover_mid,
+          alte: valori.cloud_cover_high,
+          totale: valori.cloud_cover,
+        }),
+        bassePct: valori.cloud_cover_low ?? null,
+        mediePct: valori.cloud_cover_mid ?? null,
+        altePct: valori.cloud_cover_high ?? null,
         baseM: base?.baseM ?? null,
         stima: base?.stima ?? null,
         inNube,
       };
       if (inNube) trattiInNube++;
     }
+
+    // Visibilità prevista: dal modello di confronto che la fornisce (GFS)
+    let visibilita = null;
+    for (const r of conf) {
+      const vConf = r.perCampione?.[i]?.valori?.visibility;
+      if (Number.isFinite(vConf)) {
+        const cl = classificaVisibilita(vConf);
+        if (cl) visibilita = { ...cl, fonte: r.modello.nome };
+        break;
+      }
+    }
+    if (visibilita && visibilita.etichetta === 'scarsa') trattiVisibilitaScarsa++;
 
     const quotaCella = quotaCelleArr?.[i] ?? null;
     if (
@@ -679,6 +704,7 @@ async function calcolaPrevisione(percorsoIn) {
       windchill: wc == null ? null : { gradi: wc, ...congelamento },
       rete,
       nuvole,
+      visibilita,
       fontePercepita: usaUtci ? FONTE_UTCI : FONTE_STEADMAN,
       senzaDati: !p,
     });
@@ -704,6 +730,11 @@ async function calcolaPrevisione(percorsoIn) {
   if (trattiInNube) {
     avvisi.push(
       `Base delle nubi sotto il sentiero su ${trattiInNube} tratti: possibile marcia in nebbia, orientati con traccia GPS`
+    );
+  }
+  if (trattiVisibilitaScarsa) {
+    avvisi.push(
+      `Visibilità da nebbia (sotto 1 km) su ${trattiVisibilitaScarsa} tratti (previsione GFS)`
     );
   }
   const senzaDati = arricchiti.filter((a) => a.senzaDati).length;
