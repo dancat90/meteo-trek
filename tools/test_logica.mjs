@@ -573,6 +573,11 @@ console.log('── Nuvole (base nuvolosa) ──');
   test('stima LCL ≈ quota + 125·spread', stima.stima === true && vicino(stima.baseM, 2680, 40), String(stima.baseM));
   const saturo = baseNuvolosa({ baseModelloM: null, tC: 8, rh: 100, quotaM: 1500, coperturaPct: 100 });
   test('aria satura → base alla quota (nebbia)', vicino(saturo.baseM, 1500, 5), String(saturo.baseM));
+  // Stima soppressa quando le nubi basse sono scarse (velo alto): il
+  // caso «97% alte con base 2453 m» segnalato dall'utente
+  test('velo alto → stima base soppressa', baseNuvolosa({ baseModelloM: null, tC: 15, rh: 70, quotaM: 2000, coperturaPct: 97, bassePct: 10 }) === null);
+  test('nubi basse consistenti → stima presente', baseNuvolosa({ baseModelloM: null, tC: 15, rh: 70, quotaM: 2000, coperturaPct: 90, bassePct: 60 }) !== null);
+  test('base dal modello resta anche con basse scarse', baseNuvolosa({ baseModelloM: 4500, tC: 15, rh: 70, quotaM: 2000, coperturaPct: 97, bassePct: 10 }).baseM === 4500);
 
   // Intensità solare qualitativa: bordi esatti delle soglie
   test('sole 9 → nulla', intensitaSolare(9).etichetta === 'nulla');

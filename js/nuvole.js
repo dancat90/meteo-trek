@@ -56,11 +56,17 @@ export function puntoRugiada(tC, rh) {
 // Base nuvolosa in metri sul livello del mare, oppure null con cielo
 // quasi sereno (base senza senso) o ingressi mancanti.
 // Restituisce { baseM, stima } — stima=true quando è LCL, non modello.
-export function baseNuvolosa({ baseModelloM, tC, rh, quotaM, coperturaPct }) {
+// La stima LCL descrive solo le nubi BASSE: con nubi basse scarse
+// (bassePct < 30) il numero non corrisponde a nessuna nube reale
+// (es. velo di cirri a 8000 m con LCL a 2450 m) e viene soppresso.
+// Il valore del modello (base reale dello strato più basso presente)
+// resta sempre visibile.
+export function baseNuvolosa({ baseModelloM, tC, rh, quotaM, coperturaPct, bassePct }) {
   if (!Number.isFinite(coperturaPct) || coperturaPct < 10) return null;
   if (Number.isFinite(baseModelloM) && baseModelloM > 0) {
     return { baseM: Math.round(baseModelloM), stima: false };
   }
+  if (Number.isFinite(bassePct) && bassePct < 30) return null;
   const td = puntoRugiada(tC, rh);
   if (td === null || !Number.isFinite(quotaM)) return null;
   return { baseM: Math.round(quotaM + 125 * Math.max(0, tC - td)), stima: true };

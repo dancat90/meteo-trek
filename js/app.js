@@ -609,6 +609,7 @@ async function calcolaPrevisione(percorsoIn) {
         rh: valori.relative_humidity_2m,
         quotaM: c.eleM,
         coperturaPct: valori.cloud_cover,
+        bassePct: valori.cloud_cover_low,
       });
       // «In nube» solo con nubi BASSE consistenti: il velo di cirri
       // copre il cielo ma non avvolge il sentiero
