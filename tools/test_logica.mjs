@@ -48,6 +48,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { albaTramontoUtc } from '../js/sole.js';
+import { puntoDaTraccia, mercatorPx, scegliZoom } from '../js/ui/marcia.js';
 import { windchillC, classeCongelamento } from '../js/windchill.js';
 import { mrtDiNapoli, cosszaDaToa, giornoAnnoUtc } from '../js/radiante.js';
 import { stUtci } from '../js/utci-poly.js';
@@ -424,6 +425,26 @@ console.log('── Tabella di marcia e tramonto ──');
   const inverno = albaTramontoUtc(new Date(Date.UTC(2026, 11, 21, 12)), 41.9, 12.5);
   test('Roma 21/12: tramonto ~15:42Z', Math.abs(inverno.tramontoUtc.getTime() - Date.UTC(2026, 11, 21, 15, 42)) < 10 * 60000, inverno.tramontoUtc.toISOString());
   test('notte polare → null', albaTramontoUtc(new Date(Date.UTC(2026, 11, 21, 12)), 78, 15) === null);
+
+  // Mappa dei punti di controllo: geometria pura
+  const traccia = [
+    { lat: 46.0, lon: 11.0, d: 0 },
+    { lat: 46.1, lon: 11.0, d: 11.1 },
+  ];
+  const meta = puntoDaTraccia(traccia, 5.55);
+  test('punto a metà traccia interpolato', vicino(meta.lat, 46.05, 0.001) && meta.lon === 11.0, JSON.stringify(meta));
+  test('oltre la fine → ultimo punto', puntoDaTraccia(traccia, 99).lat === 46.1);
+  test('prima dell\'inizio → primo punto', puntoDaTraccia(traccia, -1).lat === 46.0);
+
+  const m1 = mercatorPx(46, 11, 10);
+  const m2 = mercatorPx(46.1, 11.1, 10);
+  test('mercator: lon cresce → x cresce', m2.x > m1.x);
+  test('mercator: lat cresce → y cala', m2.y < m1.y);
+  const zb = scegliZoom({ latMin: 46, latMax: 46.1, lonMin: 11, lonMax: 11.15 }, 1100);
+  const a = mercatorPx(46.1, 11, zb);
+  const b = mercatorPx(46, 11.15, zb);
+  test('zoom scelto: riquadro entro il lato massimo', b.x - a.x <= 1100 && b.y - a.y <= 1100, String(zb));
+  test('zoom più stretto sforerebbe', (() => { const a2 = mercatorPx(46.1, 11, zb + 1); const b2 = mercatorPx(46, 11.15, zb + 1); return b2.x - a2.x > 1100 || b2.y - a2.y > 1100; })());
 }
 
 console.log('── Windchill (tabella Environment Canada) ──');

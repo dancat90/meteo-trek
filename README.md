@@ -56,9 +56,14 @@ pranzo.
 
 Punti di controllo ogni 15 minuti di tabella (pause incluse): ora
 prevista, tempo e distanza parziali/totali, quota, pendenza media del
-tratto, meteo del punto. Bottone «Esporta PDF» (stampa del browser,
-funziona offline). Calcolo del tramonto sul punto di arrivo: se
-l'arrivo previsto è a meno di 1 ora dal tramonto scatta l'avviso.
+tratto, meteo del punto, stima rete. Mappa dedicata con i punti
+numerati sulla traccia colorata per rischio: click su una riga →
+evidenzia il punto sulla mappa, click su un punto → evidenzia la riga.
+Bottone «Esporta PDF» (stampa del browser): il PDF include la mappa
+topografica vera, composta dai tile OpenTopoMap (CORS aperto); se i
+tile non arrivano, ripiego dichiarato sulla sola traccia. Calcolo del
+tramonto sul punto di arrivo: se l'arrivo previsto è a meno di 1 ora
+dal tramonto scatta l'avviso.
 
 ## Copertura Vodafone (stima)
 

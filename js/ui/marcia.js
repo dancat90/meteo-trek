@@ -1,13 +1,28 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Tabella di marcia: punti di controllo ogni 15 minuti di tabella, con
-// meteo, quota, pendenza media del tratto, parziali di distanza e tempo.
-// Esportazione PDF senza librerie: si apre una finestra di stampa con un
-// documento autonomo (bianco su nero di stampa) e si lascia al browser
-// il "Salva come PDF". Funziona anche offline.
+// meteo, quota, pendenza media del tratto, parziali di distanza e tempo,
+// stima rete, e MAPPA con i punti numerati:
+// - a schermo: seconda mappa Leaflet (stessi tile e stessa traccia
+//   colorata per rischio della principale), selezione sincronizzata
+//   tabella ↔ mappa nei due sensi;
+// - nel PDF: immagine composta su canvas dai tile OpenTopoMap (CORS *
+//   verificato, crossOrigin=anonymous) con traccia e numeri; se i tile
+//   non arrivano, ripiego dichiarato sulla sola traccia su fondo bianco.
+// Esportazione PDF senza librerie: finestra di stampa con documento
+// autonomo, il "Salva come PDF" del browser fa il resto.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { escapeHtml } from './mappa.js';
 import { formattaOra } from '../tempo.js';
+import { COLORI_SEVERITA } from '../config.js';
+
+const TILE_URL = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png';
+const ATTRIBUZIONE =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://opentopomap.org/">OpenTopoMap</a> (CC-BY-SA)';
+
+let mappaMarcia = null;
+let markerControlli = [];
+let righeMarcia = [];
 
 const hmm = (min) => {
   const m = Math.round(min);
@@ -15,6 +30,47 @@ const hmm = (min) => {
 };
 const num = (v, dec = 0, unita = '') =>
   Number.isFinite(v) ? `${v.toFixed(dec)}${unita}` : '–';
+
+// ── Geometria pura (esportata anche per i test) ─────────────────────────
+
+// Punto {lat, lon} alla progressiva dKm, interpolato sulla traccia
+// decimata (la stessa polyline disegnata: i marker cadono sulla linea)
+export function puntoDaTraccia(traccia, dKm) {
+  if (!traccia?.length) return null;
+  if (dKm <= traccia[0].d) return { lat: traccia[0].lat, lon: traccia[0].lon };
+  for (let i = 1; i < traccia.length; i++) {
+    if (traccia[i].d >= dKm) {
+      const a = traccia[i - 1];
+      const b = traccia[i];
+      const l = b.d - a.d;
+      const f = l > 0 ? (dKm - a.d) / l : 0;
+      return { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f };
+    }
+  }
+  const u = traccia[traccia.length - 1];
+  return { lat: u.lat, lon: u.lon };
+}
+
+// Web Mercator: coordinate in pixel "mondo" allo zoom z (tile da 256)
+export function mercatorPx(lat, lon, z) {
+  const scala = 256 * Math.pow(2, z);
+  const x = ((lon + 180) / 360) * scala;
+  const rad = (lat * Math.PI) / 180;
+  const y = ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * scala;
+  return { x, y };
+}
+
+// Zoom più alto in cui il riquadro sta dentro latoMaxPx
+export function scegliZoom(bounds, latoMaxPx = 1100) {
+  for (let z = 15; z >= 6; z--) {
+    const a = mercatorPx(bounds.latMax, bounds.lonMin, z);
+    const b = mercatorPx(bounds.latMin, bounds.lonMax, z);
+    if (b.x - a.x <= latoMaxPx && b.y - a.y <= latoMaxPx) return z;
+  }
+  return 6;
+}
+
+// ── Dati di riga ────────────────────────────────────────────────────────
 
 function righeDati(r) {
   return r.marcia.map((p, i) => {
@@ -57,12 +113,15 @@ function testataTramonto(r) {
   return `tramonto ${t}${margine}`;
 }
 
+// ── Render a schermo ────────────────────────────────────────────────────
+
 export function renderMarcia(el, r) {
   if (!r.marcia?.length) {
     el.hidden = true;
     return;
   }
   const righe = righeDati(r);
+  const puntiMappa = r.marcia.map((p) => puntoDaTraccia(r.traccia, p.dKm));
   const allarme =
     r.margineTramontoMin != null && r.margineTramontoMin < 60
       ? `<div class="avvisi"><div>⚠ Il trek deve finire entro un'ora dal tramonto: ${
@@ -82,6 +141,7 @@ export function renderMarcia(el, r) {
         <button id="bottone-pdf-marcia" type="button">Esporta PDF</button>
       </div>
       ${allarme}
+      <div class="mappa-marcia" aria-label="Mappa dei punti di controllo numerati"></div>
       <div class="contenitore-tabella"><table class="tratti">
         <thead><tr>
           <th>#</th><th>ora</th><th>tempo<br>parz/tot</th><th>km<br>parz/tot</th>
@@ -90,7 +150,7 @@ export function renderMarcia(el, r) {
         </tr></thead>
         <tbody>${righe
           .map(
-            (x) => `<tr>
+            (x, i) => `<tr class="riga-marcia" data-idx="${i}">
           <td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
           <td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td>
           <td>${x.raff}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteDot(x.rete)}</td>
@@ -100,24 +160,260 @@ export function renderMarcia(el, r) {
       </table></div>
     </div>`;
   el.hidden = false;
-  el.querySelector('#bottone-pdf-marcia')?.addEventListener('click', () => esportaPdf(r));
+
+  righeMarcia = [...el.querySelectorAll('tr.riga-marcia')];
+  righeMarcia.forEach((tr) => {
+    tr.addEventListener('click', () => selezionaControllo(Number(tr.dataset.idx), false));
+  });
+  el.querySelector('#bottone-pdf-marcia')?.addEventListener('click', () =>
+    esportaPdf(r, righe, puntiMappa)
+  );
+  disegnaMappaMarcia(el, r, puntiMappa);
 }
 
-// Documento di stampa autonomo: il "Salva come PDF" del browser fa il
-// resto. Nessuna libreria, nessuna rete.
-function esportaPdf(r) {
-  const righe = righeDati(r);
-  const html = `<!doctype html><html lang="it"><head><meta charset="utf-8">
+// Seconda mappa: stessi tile e stessa traccia colorata della principale,
+// più i punti di controllo numerati
+function disegnaMappaMarcia(el, r, punti) {
+  if (typeof L === 'undefined') return; // ambiente senza Leaflet
+  if (mappaMarcia) {
+    mappaMarcia.remove();
+    mappaMarcia = null;
+  }
+  const cont = el.querySelector('.mappa-marcia');
+  if (!cont || !r.traccia?.length) return;
+
+  mappaMarcia = L.map(cont, { scrollWheelZoom: false });
+  L.tileLayer(TILE_URL, { attribution: ATTRIBUZIONE, maxZoom: 17 }).addTo(mappaMarcia);
+
+  // Traccia a segmenti colorati per rischio (stessa regola della mappa
+  // principale: colore prudente = massimo dei due campioni estremi)
+  for (let i = 0; i < r.campioni.length - 1; i++) {
+    const da = r.campioni[i].dCumKm;
+    const a = r.campioni[i + 1].dCumKm;
+    const seg = r.traccia.filter((p) => p.d >= da - 1e-6 && p.d <= a + 1e-6);
+    if (seg.length < 2) continue;
+    const score = Math.max(r.campioni[i].score ?? 0, r.campioni[i + 1].score ?? 0);
+    L.polyline(seg.map((p) => [p.lat, p.lon]), {
+      color: COLORI_SEVERITA[score],
+      weight: 4,
+      opacity: 0.9,
+    }).addTo(mappaMarcia);
+  }
+
+  // Partenza
+  const p0 = r.traccia[0];
+  L.circleMarker([p0.lat, p0.lon], {
+    radius: 7,
+    color: '#c9d1d9',
+    fillColor: '#0d1117',
+    fillOpacity: 1,
+    weight: 2,
+  })
+    .bindTooltip('Partenza')
+    .addTo(mappaMarcia);
+
+  // Punti di controllo numerati, cliccabili
+  markerControlli = punti.map((p, i) => {
+    if (!p) return null;
+    const m = L.marker([p.lat, p.lon], {
+      icon: L.divIcon({
+        className: 'pin-wrap',
+        html: `<div class="pin-controllo" data-i="${i}">${i + 1}</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      }),
+    }).addTo(mappaMarcia);
+    m.on('click', () => selezionaControllo(i, true));
+    return m;
+  });
+
+  mappaMarcia.fitBounds(
+    L.latLngBounds(r.traccia.map((p) => [p.lat, p.lon])),
+    { padding: [24, 24] }
+  );
+  // Il container esce ora da [hidden]: senza invalidateSize la mappa
+  // resterebbe alla size (0,0) cacheata
+  setTimeout(() => mappaMarcia?.invalidateSize(), 0);
+}
+
+// Selezione sincronizzata tabella ↔ mappa (nei due sensi)
+function selezionaControllo(i, daMappa) {
+  righeMarcia.forEach((tr) =>
+    tr.classList.toggle('selezionata', Number(tr.dataset.idx) === i)
+  );
+  document
+    .querySelectorAll('.pin-controllo')
+    .forEach((p) => p.classList.toggle('selezionato', Number(p.dataset.i) === i));
+  if (daMappa) {
+    righeMarcia[i]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } else if (markerControlli[i] && mappaMarcia) {
+    mappaMarcia.panTo(markerControlli[i].getLatLng());
+  }
+}
+
+// ── Immagine della mappa per il PDF ─────────────────────────────────────
+
+// Composizione su canvas: tile OpenTopoMap (CORS aperto) + traccia
+// colorata + numeri. conTile=false: solo traccia su bianco (ripiego).
+async function componiCanvas(r, punti, conTile) {
+  const lats = r.traccia.map((p) => p.lat);
+  const lons = r.traccia.map((p) => p.lon);
+  const mLat = (Math.max(...lats) - Math.min(...lats)) * 0.12 + 0.004;
+  const mLon = (Math.max(...lons) - Math.min(...lons)) * 0.12 + 0.004;
+  const bounds = {
+    latMin: Math.min(...lats) - mLat,
+    latMax: Math.max(...lats) + mLat,
+    lonMin: Math.min(...lons) - mLon,
+    lonMax: Math.max(...lons) + mLon,
+  };
+  const z = scegliZoom(bounds, 1100);
+  const o = mercatorPx(bounds.latMax, bounds.lonMin, z); // angolo alto-sx
+  const f = mercatorPx(bounds.latMin, bounds.lonMax, z);
+  const W = Math.max(320, Math.ceil(f.x - o.x));
+  const H = Math.max(240, Math.ceil(f.y - o.y));
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  if (conTile) {
+    const t0x = Math.floor(o.x / 256);
+    const t1x = Math.floor(f.x / 256);
+    const t0y = Math.floor(o.y / 256);
+    const t1y = Math.floor(f.y / 256);
+    const caricamenti = [];
+    for (let tx = t0x; tx <= t1x; tx++) {
+      for (let ty = t0y; ty <= t1y; ty++) {
+        caricamenti.push(
+          new Promise((fine) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            const timer = setTimeout(() => fine(false), 9000);
+            img.onload = () => {
+              clearTimeout(timer);
+              ctx.drawImage(img, tx * 256 - o.x, ty * 256 - o.y);
+              fine(true);
+            };
+            img.onerror = () => {
+              clearTimeout(timer);
+              fine(false);
+            };
+            img.src = `https://a.tile.opentopomap.org/${z}/${tx}/${ty}.png`;
+          })
+        );
+      }
+    }
+    const esiti = await Promise.all(caricamenti);
+    if (!esiti.some(Boolean)) throw new Error('nessun tile caricato');
+  }
+
+  const aPx = (p) => {
+    const m = mercatorPx(p.lat, p.lon, z);
+    return [m.x - o.x, m.y - o.y];
+  };
+
+  // Traccia a segmenti colorati per rischio, con alone bianco leggibile
+  for (let i = 0; i < r.campioni.length - 1; i++) {
+    const da = r.campioni[i].dCumKm;
+    const a = r.campioni[i + 1].dCumKm;
+    const seg = r.traccia.filter((p) => p.d >= da - 1e-6 && p.d <= a + 1e-6);
+    if (seg.length < 2) continue;
+    const score = Math.max(r.campioni[i].score ?? 0, r.campioni[i + 1].score ?? 0);
+    for (const [larghezza, colore] of [
+      [7, 'rgba(255,255,255,0.85)'],
+      [4, COLORI_SEVERITA[score]],
+    ]) {
+      ctx.beginPath();
+      seg.forEach((p, k) => {
+        const [x, y] = aPx(p);
+        if (k === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.lineWidth = larghezza;
+      ctx.strokeStyle = colore;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+  }
+
+  // Partenza
+  const [xs, ys] = aPx(r.traccia[0]);
+  ctx.beginPath();
+  ctx.arc(xs, ys, 6, 0, 2 * Math.PI);
+  ctx.fillStyle = '#0d1117';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
+
+  // Punti di controllo numerati
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  punti.forEach((p, i) => {
+    if (!p) return;
+    const [x, y] = aPx(p);
+    ctx.beginPath();
+    ctx.arc(x, y, 11, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0d1117';
+    ctx.stroke();
+    ctx.fillStyle = '#0d1117';
+    ctx.fillText(String(i + 1), x, y + 0.5);
+  });
+
+  return canvas.toDataURL('image/png');
+}
+
+async function immagineMappaPdf(r, punti) {
+  try {
+    return { dataUrl: await componiCanvas(r, punti, true), sfondo: true };
+  } catch {
+    try {
+      return { dataUrl: await componiCanvas(r, punti, false), sfondo: false };
+    } catch {
+      return { dataUrl: null, sfondo: false };
+    }
+  }
+}
+
+// ── Esportazione PDF ────────────────────────────────────────────────────
+
+// La finestra va aperta SUBITO nel gesto di click (anti popup-blocker):
+// il documento arriva dopo, a immagine pronta.
+function esportaPdf(r, righe, puntiMappa) {
+  const w = window.open('', '_blank');
+  if (!w) return;
+  w.document.write('<p style="font-family:sans-serif">Preparo la tabella di marcia…</p>');
+
+  immagineMappaPdf(r, puntiMappa).then(({ dataUrl, sfondo }) => {
+    const blocco =
+      dataUrl == null
+        ? '<p><em>Mappa non disponibile (tile non raggiungibili).</em></p>'
+        : `<img class="mappa" src="${dataUrl}" alt="Mappa del percorso coi punti di controllo">
+           <p class="pie">${
+             sfondo
+               ? 'Sfondo mappa © OpenStreetMap · OpenTopoMap (CC-BY-SA).'
+               : 'Sfondo topografico non disponibile: solo traccia e punti.'
+           } Numeri = punti di controllo della tabella.</p>`;
+    const html = `<!doctype html><html lang="it"><head><meta charset="utf-8">
 <title>Tabella di marcia — ${escapeHtml(r.nome || 'percorso')}</title>
 <style>
   body { font: 12px/1.4 system-ui, sans-serif; color: #000; margin: 24px; }
   h1 { font-size: 16px; margin: 0 0 4px; }
   .meta { margin: 0 0 12px; color: #333; }
   .allarme { border: 2px solid #000; padding: 6px 8px; margin: 0 0 12px; font-weight: bold; }
+  .mappa { width: 100%; max-height: 60vh; object-fit: contain; border: 1px solid #999; margin-bottom: 8px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { border: 1px solid #999; padding: 3px 6px; text-align: center; }
   th { background: #eee; }
-  .pie { margin-top: 10px; color: #555; font-size: 10px; }
+  .pie { margin-top: 6px; color: #555; font-size: 10px; }
+  @media print { .mappa { max-height: none; } }
 </style></head><body>
 <h1>Tabella di marcia — ${escapeHtml(r.nome || 'percorso')}</h1>
 <p class="meta">
@@ -135,6 +431,7 @@ ${
       } (regola: finire almeno 1 ora prima).</p>`
     : ''
 }
+${blocco}
 <table><thead><tr>
   <th>#</th><th>ora</th><th>tempo parz/tot</th><th>km parz/tot</th><th>quota</th>
   <th>pend.</th><th>T</th><th>percepita</th><th>raffiche km/h</th><th>prob. pioggia</th><th>mm</th><th>rete</th>
@@ -149,12 +446,12 @@ ${righe
 <p class="pie">Colonna «rete»: stima copertura Vodafone da OpenCelliD
 (sì = cella entro 2 km, ? = entro 6 km, no = oltre) — indicazione, non garanzia.</p>
 <p class="pie">Meteo Trek — previsione generata ${escapeHtml(
-    formattaOra(new Date(r.generatoIl), r.tz)
-  )} (${escapeHtml(r.modello?.nome || '')}) — stima hobbistica, non sostituisce i bollettini.</p>
+      formattaOra(new Date(r.generatoIl), r.tz)
+    )} (${escapeHtml(r.modello?.nome || '')}) — stima hobbistica, non sostituisce i bollettini.</p>
 <script>window.print()</script>
 </body></html>`;
-  const w = window.open('', '_blank');
-  if (!w) return;
-  w.document.write(html);
-  w.document.close();
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  });
 }

@@ -238,6 +238,36 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
   margin-bottom: 10px;
 }
 .marcia-testata button { margin-left: auto; }
+.mappa-marcia {
+  height: 40vh;
+  min-height: 260px;
+  border-radius: 12px;
+  border: 1px solid var(--bordo);
+  background: var(--pannello);
+  margin-bottom: 10px;
+}
+.riga-marcia { cursor: pointer; }
+/* Marker numerati dei punti di controllo */
+.pin-wrap { background: none; border: none; }
+.pin-controllo {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #0d1117;
+  color: #fff;
+  border: 2px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.pin-controllo.selezionato {
+  background: #2f81f7;
+  transform: scale(1.25);
+}
 
 /* ── Impostazioni ── */
 dialog {
