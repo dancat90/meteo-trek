@@ -7,7 +7,7 @@
 // di un percorso abbandonato.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI } from './config.js';
+import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE } from './config.js';
 import * as storage from './storage.js';
 import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc } from './tempo.js';
 import { campionaTraccia, bboxPunti } from './geo.js';
@@ -15,13 +15,15 @@ import { percorsoDaGpx, percorsoDaKomoot, costruisciPercorso, campioniPerQuota, 
 import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza } from './eta.js';
 import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/modelli.js';
 import { meteoModello, meteoConfronto, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
+import { quoteDemCached } from './api/dem.js';
+import { puntiSondaEsposizione, profiliDaQuote, fattoreEsposizione } from './esposizione.js';
 import { fascia, classeDispersione } from './dispersione.js';
 import { ensemblePrecipitazione } from './api/ensemble.js';
 import { estraiUserId, estraiTour, elencaTourPianificati, coordinateTour, dettagliTour } from './api/komoot.js';
 import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
-import { percepita, utciDaValori, FONTE_UTCI, FONTE_STEADMAN } from './percepita.js';
+import { percepitaOperativa, FONTE_UTCI, FONTE_STEADMAN, FONTE_WINDCHILL_SU_UTCI, FONTE_WINDCHILL_SU_STEADMAN } from './percepita.js';
 import { giornoAnnoUtc } from './radiante.js';
-import { windchillC, classeCongelamento } from './windchill.js';
+import { classeCongelamento } from './windchill.js';
 import { baseNuvolosa, tipologiaNubi, classificaVisibilita } from './nuvole.js';
 import { puntiControllo } from './marcia.js';
 import { caricaGriglia, stimaRete } from './copertura.js';
@@ -396,7 +398,7 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito, espoEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
@@ -419,6 +421,11 @@ async function calcolaPrevisione(percorsoIn) {
     caricaGriglia(),
     // Aree protette attraversate + regole sui cani (Overpass + tabella)
     areeConRegole(campioni),
+    // Profili di esposizione orografica: sonde DEM a 8 direzioni per
+    // campione (cache locale: il terreno non cambia). Ramo protetto
+    // dall'allSettled: il fallimento degrada a fattore 1 con avviso
+    (async () =>
+      profiliDaQuote(campioni, await quoteDemCached(puntiSondaEsposizione(campioni))))(),
   ]);
 
   // 7. Degradazioni esplicite, mai silenziose
@@ -484,6 +491,14 @@ async function calcolaPrevisione(percorsoIn) {
     }
   }
 
+  // Correzione orografica del vento: profili a 8 settori per campione
+  const profiliEspo = espoEsito.status === 'fulfilled' ? espoEsito.value : null;
+  if (!profiliEspo) {
+    avvisi.push(
+      'Correzione orografica del vento non disponibile (modello del terreno non raggiungibile): vento come da modello'
+    );
+  }
+
   // Quote celle: valide solo se il modello usato è rimasto il primario
   const quotaCelleArr =
     modelloUsato.id === scelta.primario.id && celleEsito.status === 'fulfilled'
@@ -516,24 +531,49 @@ async function calcolaPrevisione(percorsoIn) {
   let trattiSenzaRete = 0;
   let trattiInNube = 0;
   let trattiVisibilitaScarsa = 0;
+  let trattiSenzaDirezione = 0;
+  let trattiCrestaVento = 0;
   let forbiceAmpia = false;
   for (let i = 0; i < campioni.length; i++) {
     const c = campioni[i];
     const p = prim.perCampione[i];
     const valori = p?.valori || {};
     const giorno = giornoAnnoUtc(orari[i]);
-    // Percepita titolare: UTCI se il modello ha gli ingressi radiativi,
-    // altrimenti Steadman (fonte dichiarata per campione)
-    const utciPrim = utciDaValori(valori, giorno);
-    const usaUtci = Number.isFinite(utciPrim);
-    const percepitaC = usaUtci ? utciPrim : percepita(valori, giorno);
+
+    // Vento efficace: fattore di esposizione orografica risolto sulla
+    // direzione oraria del vento (del primario, per tutti i modelli).
+    // Regola unica: i numeri di vento STAMPATI restano quelli del
+    // modello; le grandezze derivate (percepita, windchill, rischio)
+    // usano l'efficace; l'affidabilità resta sui grezzi.
+    const espo = profiliEspo
+      ? fattoreEsposizione(profiliEspo[i], valori.wind_direction_10m)
+      : { fattore: 1, classe: null };
+    const fEspo = Number.isFinite(espo.fattore) ? espo.fattore : 1;
+    if (profiliEspo && p && Number.isFinite(valori.wind_speed_10m) && !Number.isFinite(valori.wind_direction_10m)) {
+      trattiSenzaDirezione++;
+    }
+    const conFattore = (v) => {
+      if (!v || fEspo === 1) return v;
+      const out = { ...v };
+      if (Number.isFinite(v.wind_speed_10m)) out.wind_speed_10m = v.wind_speed_10m * fEspo;
+      if (Number.isFinite(v.wind_gusts_10m)) out.wind_gusts_10m = v.wind_gusts_10m * fEspo;
+      return out;
+    };
+    const valoriEff = conFattore(valori) || {};
+    // Percepita operativa: UTCI se il modello ha gli ingressi radiativi,
+    // altrimenti Steadman, mai più mite del windchill (fusione prudente,
+    // fonte dichiarata per campione). Riceve il vento già corretto.
+    const oper = percepitaOperativa(valoriEff, giorno);
+    const usaUtci = oper.indice === 'utci';
+    const percepitaC = oper.valore;
     const ensI = ens?.perCampione?.[i] || null;
     // ICON-2I in Appennino non ha probabilità di precipitazione: per il
-    // canale pioggia vale la PoP k/N dell'ensemble
+    // canale pioggia vale la PoP k/N dell'ensemble. Base = valori con
+    // vento efficace (il canale raffiche deve sentire l'esposizione)
     const valoriRischio =
-      !Number.isFinite(valori.precipitation_probability) && Number.isFinite(ensI?.popKN)
-        ? { ...valori, precipitation_probability: ensI.popKN }
-        : valori;
+      !Number.isFinite(valoriEff.precipitation_probability) && Number.isFinite(ensI?.popKN)
+        ? { ...valoriEff, precipitation_probability: ensI.popKN }
+        : valoriEff;
     const canali = p ? scoreCanali(valoriRischio, percepitaC) : {};
     const score = p ? fusione(canali) : 0;
 
@@ -542,9 +582,10 @@ async function calcolaPrevisione(percorsoIn) {
     // Fascia multi-modello di T e percepita: modello usato + secondario +
     // modelli di confronto, tutti già alla quota del sentiero
     const perModello = [];
-    // La fascia della percepita usa lo stesso metro del valore titolare:
-    // UTCI per modello quando il primario è in UTCI, Steadman altrimenti
-    const percDi = (v) => (usaUtci ? utciDaValori(v, giorno) : v?.apparent_temperature);
+    // La fascia della percepita usa lo stesso metro del valore titolare
+    // (UTCI o Steadman) e fonde il windchill col vento di ciascun modello
+    const percDi = (v) =>
+      percepitaOperativa(v, giorno, { metro: usaUtci ? 'utci' : 'steadman' }).valore;
     if (p) {
       perModello.push({ nome: modelloUsato.nome, t: valori.temperature_2m, perc: percepitaC });
     }
@@ -552,12 +593,13 @@ async function calcolaPrevisione(percorsoIn) {
       perModello.push({
         nome: scelta.secondario.nome,
         t: vSec.temperature_2m,
-        perc: percDi(vSec),
+        // Stesso fattore di esposizione del campione, vento del modello
+        perc: percDi(conFattore(vSec)),
       });
     }
     for (const r of conf) {
       const vc = r.perCampione?.[i]?.valori;
-      if (vc) perModello.push({ nome: r.modello.nome, t: vc.temperature_2m, perc: percDi(vc) });
+      if (vc) perModello.push({ nome: r.modello.nome, t: vc.temperature_2m, perc: percDi(conFattore(vc)) });
     }
     const tFasciaBase = fascia(perModello.map((m) => m.t));
     const tFascia = tFasciaBase
@@ -587,10 +629,17 @@ async function calcolaPrevisione(percorsoIn) {
       leadGiorni: (orari[i].getTime() - Date.now()) / 86400000,
     });
 
-    // Windchill (solo dominio invernale: T ≤ 10 °C e vento ≥ 4,8 km/h)
-    const wc = windchillC(valori.temperature_2m, valori.wind_speed_10m);
+    // Windchill (solo dominio invernale: T ≤ 10 °C e vento ≥ 4,8 km/h),
+    // già calcolato dalla percepita operativa col vento efficace
+    const wc = oper.windchillC;
     const congelamento = classeCongelamento(wc);
     if (congelamento && congelamento.livello >= 1) trattiCongelamento++;
+
+    // Cresta con raffiche efficaci da score ≥ 2: il modello da solo
+    // sottostima, l'avviso lo dice esplicitamente
+    if (espo.classe === 'cresta' && Number.isFinite(valoriEff.wind_gusts_10m) && valoriEff.wind_gusts_10m >= 60) {
+      trattiCrestaVento++;
+    }
 
     // Stima copertura Vodafone del tratto
     let rete = null;
@@ -667,21 +716,6 @@ async function calcolaPrevisione(percorsoIn) {
     }
 
     const oraLocale = formattaOra(orari[i], tz);
-    const popup = [
-      `<strong>${escapeHtml(oraLocale)}</strong> · km ${c.dCumKm.toFixed(1)} · ${Math.round(c.eleM ?? 0)} m`,
-      Number.isFinite(valori.temperature_2m)
-        ? `T ${Math.round(valori.temperature_2m)}° (percepita ${Math.round(percepitaC ?? valori.temperature_2m)}°)`
-        : null,
-      Number.isFinite(valori.wind_gusts_10m)
-        ? `raffiche ${Math.round(valori.wind_gusts_10m)} km/h`
-        : null,
-      Number.isFinite(valori.precipitation) && valori.precipitation > 0
-        ? `pioggia ${valori.precipitation.toFixed(1)} mm`
-        : null,
-      descriviWmo(valori.weather_code),
-    ]
-      .filter(Boolean)
-      .join('<br>');
 
     arricchiti.push({
       lat: c.lat,
@@ -692,6 +726,8 @@ async function calcolaPrevisione(percorsoIn) {
       oraLocale,
       valori,
       percepitaC,
+      percepitaGoverna: oper.governa,
+      percepitaIndiceC: oper.indiceC,
       tFascia,
       percFascia,
       tPerModello: perModello,
@@ -703,10 +739,27 @@ async function calcolaPrevisione(percorsoIn) {
       quotaCella,
       precip15Max: p?.precip15Max ?? d2Res?.perCampione?.[i]?.precip15Max ?? null,
       windchill: wc == null ? null : { gradi: wc, ...congelamento },
+      esposizione: profiliEspo
+        ? {
+            fattore: fEspo,
+            classe: espo.classe,
+            dirGradi: Number.isFinite(valori.wind_direction_10m) ? valori.wind_direction_10m : null,
+            ventoEffKmh: Number.isFinite(valoriEff.wind_speed_10m) ? valoriEff.wind_speed_10m : null,
+            raffEffKmh: Number.isFinite(valoriEff.wind_gusts_10m) ? valoriEff.wind_gusts_10m : null,
+            profilo8: profiliEspo[i]?.f8 ?? null,
+          }
+        : null,
       rete,
       nuvole,
       visibilita,
-      fontePercepita: usaUtci ? FONTE_UTCI : FONTE_STEADMAN,
+      fontePercepita:
+        oper.governa === 'windchill'
+          ? usaUtci
+            ? FONTE_WINDCHILL_SU_UTCI
+            : FONTE_WINDCHILL_SU_STEADMAN
+          : usaUtci
+            ? FONTE_UTCI
+            : FONTE_STEADMAN,
       senzaDati: !p,
     });
   }
@@ -736,6 +789,16 @@ async function calcolaPrevisione(percorsoIn) {
   if (trattiVisibilitaScarsa) {
     avvisi.push(
       `Visibilità da nebbia (sotto 1 km) su ${trattiVisibilitaScarsa} tratti (previsione GFS)`
+    );
+  }
+  if (trattiSenzaDirezione) {
+    avvisi.push(
+      `Su ${trattiSenzaDirezione} tratti direzione del vento assente: vento non corretto per orografia`
+    );
+  }
+  if (trattiCrestaVento) {
+    avvisi.push(
+      `Su ${trattiCrestaVento} tratti in cresta il vento reale può superare il valore del modello (correzione orografica)`
     );
   }
   const senzaDati = arricchiti.filter((a) => a.senzaDati).length;
@@ -902,7 +965,15 @@ function popupCampione(c) {
     Number.isFinite(v.temperature_2m)
       ? `T ${Math.round(v.temperature_2m)}° (percepita ${Math.round(c.percepitaC ?? v.temperature_2m)}°)`
       : 'dati non disponibili',
-    Number.isFinite(v.wind_gusts_10m) ? `raffiche ${Math.round(v.wind_gusts_10m)} km/h` : null,
+    Number.isFinite(v.wind_gusts_10m)
+      ? `raffiche ${Math.round(v.wind_gusts_10m)} km/h${
+          c.esposizione &&
+          Number.isFinite(c.esposizione.raffEffKmh) &&
+          Math.abs(c.esposizione.fattore - 1) >= ESPOSIZIONE.sogliaMarcatore
+            ? ` (eff. ${Math.round(c.esposizione.raffEffKmh)})`
+            : ''
+        }`
+      : null,
     Number.isFinite(v.precipitation) && v.precipitation > 0
       ? `pioggia ${v.precipitation.toFixed(1)} mm`
       : null,

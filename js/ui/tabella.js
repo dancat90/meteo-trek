@@ -4,7 +4,7 @@
 // Prima colonna sticky, scroll orizzontale sotto i 480 px.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { COLORI_SEVERITA, ETICHETTE_RISCHIO } from '../config.js';
+import { COLORI_SEVERITA, ETICHETTE_RISCHIO, ESPOSIZIONE } from '../config.js';
 import { intensitaSolare } from '../nuvole.js';
 import { classificaAffidabilitaGlobale } from '../affidabilita.js';
 import { escapeHtml } from './mappa.js';
@@ -83,6 +83,19 @@ function cellaFascia(valore, f) {
   return `${num(f.mediana, 0, '°')} <span class="forbice ${cl}">[${num(f.min, 0)}–${num(f.max, 0)}]</span>`;
 }
 
+// Marcatore della correzione orografica nelle colonne vento/raffiche:
+// i numeri restano quelli del modello, l'efficace sta nel dettaglio.
+// ▾ = riparo (efficace più basso), ▴ = cresta o pendio esposto.
+function marcatoreEsposizione(c) {
+  const f = c.esposizione?.fattore;
+  if (!Number.isFinite(f) || Math.abs(f - 1) < ESPOSIZIONE.sogliaMarcatore) return '';
+  return ` <span class="forbice" title="corretto per orografia: vedi dettaglio">${f > 1 ? '▴' : '▾'}</span>`;
+}
+
+// Nome del rombo di bussola dalla direzione in gradi
+const ROMBI = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+const rombo = (g) => ROMBI[Math.round((((g % 360) + 360) % 360) / 45) % 8];
+
 // campioni: voci arricchite (vedi app.js assemblaCampioni)
 // unitaVento: 'kmh' | 'ms'
 export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }, onSelezione = null) {
@@ -141,8 +154,8 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }
           <td>${num(c.eleM, 0, ' m')}</td>
           <td>${cellaFascia(v.temperature_2m, c.tFascia)}</td>
           <td>${cellaFascia(c.percepitaC, c.percFascia)}</td>
-          <td>${vFmt(v.wind_speed_10m)}</td>
-          <td>${vFmt(v.wind_gusts_10m)}</td>
+          <td>${vFmt(v.wind_speed_10m)}${marcatoreEsposizione(c)}</td>
+          <td>${vFmt(v.wind_gusts_10m)}${marcatoreEsposizione(c)}</td>
           <td>${num(v.relative_humidity_2m, 0, '%')}</td>
           <td>${cellaSole(v.shortwave_radiation, v.cloud_cover)}</td>
           <td>${cellaNuvole(c.nuvole)}</td>
@@ -212,8 +225,20 @@ function righeDettaglio(c, vFmt, uVento) {
   if (Number.isFinite(v.shortwave_radiation))
     parti.push(`sole ${Math.round(v.shortwave_radiation)} W/m²`);
   if (Number.isFinite(v.uv_index)) parti.push(`UV ${v.uv_index.toFixed(1)}`);
-  if (Number.isFinite(v.wind_direction_10m))
-    parti.push(`vento da ${Math.round(v.wind_direction_10m)}°`);
+  if (Number.isFinite(v.wind_direction_10m)) {
+    let voceVento = `vento da ${Math.round(v.wind_direction_10m)}° (${rombo(v.wind_direction_10m)})`;
+    const e = c.esposizione;
+    if (e && Number.isFinite(e.fattore) && Math.abs(e.fattore - 1) >= ESPOSIZIONE.sogliaMarcatore) {
+      const eff = [];
+      if (Number.isFinite(e.ventoEffKmh)) eff.push(`efficace ${vFmt(e.ventoEffKmh)} ${uVento}`);
+      if (Number.isFinite(e.raffEffKmh)) eff.push(`raffiche ${vFmt(e.raffEffKmh)} ${uVento}`);
+      const nomeClasse =
+        { riparo: 'riparo orografico', cresta: 'cresta esposta', pendio: 'pendio esposto' }[e.classe] ||
+        'correzione orografica';
+      voceVento += ` — ${eff.join(', ')}: ${nomeClasse} (fattore ${e.fattore.toFixed(2)})`;
+    }
+    parti.push(voceVento);
+  }
   if (Number.isFinite(v.freezing_level_height))
     parti.push(`zero termico ${Math.round(v.freezing_level_height)} m`);
   if (Number.isFinite(c.precip15Max))
@@ -222,8 +247,16 @@ function righeDettaglio(c, vFmt, uVento) {
     parti.push(
       'rischio da: ' + c.canaliAttivi.map((k) => `${k.nome} (${k.score})`).join(', ')
     );
-  if (c.windchill)
-    parti.push(`windchill ${Math.round(c.windchill.gradi)}° — ${c.windchill.etichetta}`);
+  if (c.windchill) {
+    // Tre varianti: governa la colonna / non governa / risultato salvato
+    // prima della fusione (campo percepitaGoverna assente)
+    const wcTxt = `windchill ${Math.round(c.windchill.gradi)}°`;
+    if (c.percepitaGoverna === 'windchill')
+      parti.push(`${wcTxt} (governa la percepita) — ${c.windchill.etichetta}`);
+    else if (c.percepitaGoverna)
+      parti.push(`${wcTxt} (la percepita mostrata è già più severa) — ${c.windchill.etichetta}`);
+    else parti.push(`${wcTxt} — ${c.windchill.etichetta}`);
+  }
   if (c.rete)
     parti.push(
       `rete Vodafone ${c.rete.etichetta}${Number.isFinite(c.rete.distKm) ? ` (cella nota a ${c.rete.distKm.toFixed(1)} km)` : ''}${c.rete.emergenzaAltraRete ? ' — altra rete vicina: chiamata 112 possibile' : ''} — stima OpenCelliD, non garanzia`

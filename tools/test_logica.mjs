@@ -11,7 +11,11 @@ import {
   quotaLungoTraccia,
   campionaTraccia,
   bboxPunti,
+  puntoADistanza,
 } from '../js/geo.js';
+import { puntiSondaEsposizione, profiliDaQuote, fattoreEsposizione } from '../js/esposizione.js';
+import { chiaveDem, cacheDemAggiorna } from '../js/api/dem.js';
+import { DEM_CACHE } from '../js/config.js';
 import { parseGpx } from '../js/gpx.js';
 import {
   costruisciPercorso,
@@ -41,7 +45,7 @@ import {
 import { dataLocaleAUtc, offsetMinuti, oraApiUtc } from '../js/tempo.js';
 import { affidabilita, etichettaAffidabilita, affidabilitaGlobale, classificaAffidabilitaGlobale } from '../js/affidabilita.js';
 import { scoreCanali, fusione, canaliAttivi } from '../js/rischio.js';
-import { percepita, utciDaValori } from '../js/percepita.js';
+import { percepita, utciDaValori, fondiWindchill, percepitaOperativa } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
 import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
 import { puntiSonda, abbinaRegole } from '../js/api/areeprotette.js';
@@ -534,6 +538,167 @@ console.log('── Radiante e UTCI ──');
   test('percepita ripiega su Steadman senza radiazione', percepita({ apparent_temperature: 21.5 }) === 21.5);
 }
 
+console.log('── Fusione percepita-windchill ──');
+{
+  // Primitiva: min prudente con gestione dei null
+  const f1 = fondiWindchill(-9, -11.05);
+  test('fusione: windchill sotto → governa', f1.valore === -11.05 && f1.governa === 'windchill');
+  const f2 = fondiWindchill(-20, -14.08);
+  test('fusione: indice già più severo → resta', f2.valore === -20 && f2.governa === 'indice');
+  test('fusione: parità → governa l\'indice', fondiWindchill(-10, -10).governa === 'indice');
+  const f4 = fondiWindchill(null, -5.91);
+  test('fusione: indice null → copre il windchill', f4.valore === -5.91 && f4.governa === 'windchill');
+  const f5 = fondiWindchill(7, null);
+  test('fusione: windchill null → resta l\'indice', f5.valore === 7 && f5.governa === 'indice');
+  const f6 = fondiWindchill(null, null);
+  test('fusione: tutto null', f6.valore === null && f6.governa === null);
+
+  // Orchestratore, ramo Steadman: T=−4 v=25 → wc JAG/TI −11,05
+  const opSt = percepitaOperativa(
+    { temperature_2m: -4, wind_speed_10m: 25, apparent_temperature: -6.5 },
+    15
+  );
+  test('operativa Steadman: windchill governa', opSt.governa === 'windchill' && opSt.indice === 'steadman');
+  test('operativa Steadman: valore = windchill', vicino(opSt.valore, -11.05, 0.01), String(opSt.valore));
+  test('operativa Steadman: indice pre-fusione conservato', opSt.indiceC === -6.5);
+  test('operativa Steadman: windchill esposto', vicino(opSt.windchillC, -11.05, 0.01));
+
+  // Ramo UTCI, zona di saturazione del vento (clamp a 61,2 km/h): l'UTCI
+  // saturo resta PIÙ severo del windchill → la fusione non scatta
+  const opSat = percepitaOperativa(
+    {
+      temperature_2m: -5, relative_humidity_2m: 70, wind_speed_10m: 90,
+      cloud_cover: 100, shortwave_radiation: 0, direct_radiation: 0,
+      direct_normal_irradiance: 0, terrestrial_radiation: 0,
+    },
+    15
+  );
+  test('saturazione: governa l\'UTCI', opSat.governa === 'utci', JSON.stringify(opSat));
+  test('saturazione: UTCI saturo ≈ −47,3', vicino(opSat.valore, -47.28, 0.6), String(opSat.valore));
+  test('saturazione: windchill −17,42 nel dettaglio', vicino(opSat.windchillC, -17.42, 0.01), String(opSat.windchillC));
+  test('saturazione: percepita sotto il windchill', opSat.valore < opSat.windchillC);
+
+  // Giornata mite serena con vento debole: la fusione toglie il beneficio
+  // del sole (trade-off prudenziale dichiarato). wc(5, 10) = +2,66
+  const opSole = percepitaOperativa(
+    {
+      temperature_2m: 5, relative_humidity_2m: 40, wind_speed_10m: 10,
+      cloud_cover: 0, shortwave_radiation: 700, direct_radiation: 520,
+      direct_normal_irradiance: 800, terrestrial_radiation: 1000,
+    },
+    200
+  );
+  test('mite serena: windchill governa', opSole.governa === 'windchill', JSON.stringify(opSole));
+  test('mite serena: valore = wc(5,10)', vicino(opSole.valore, 2.66, 0.01), String(opSole.valore));
+  test('mite serena: UTCI soleggiato era più alto', opSole.indiceC > opSole.valore + 3, String(opSole.indiceC));
+
+  // Fuori dominio windchill: T > 10 °C → resta l'indice
+  const opFuori = percepitaOperativa(
+    { temperature_2m: 12, apparent_temperature: 9, wind_speed_10m: 50 },
+    15
+  );
+  test('fuori dominio: windchill null', opFuori.windchillC === null);
+  test('fuori dominio: governa Steadman', opFuori.governa === 'steadman' && opFuori.valore === 9);
+
+  // Metro forzato (fascia multi-modello)
+  const opMetroSt = percepitaOperativa(
+    { temperature_2m: 15, apparent_temperature: 14, wind_speed_10m: 20 },
+    200,
+    { metro: 'steadman' }
+  );
+  test('metro steadman: usa apparent_temperature', opMetroSt.indice === 'steadman' && opMetroSt.valore === 14);
+  const opMetroUtci = percepitaOperativa(
+    { temperature_2m: -4, wind_speed_10m: 25, apparent_temperature: -6.5 },
+    15,
+    { metro: 'utci' }
+  );
+  test('metro utci senza radiativi: copre il windchill',
+    opMetroUtci.indice === null && opMetroUtci.governa === 'windchill' && vicino(opMetroUtci.valore, -11.05, 0.01));
+
+  // End-to-end sul canale rischio freddo: la fusione può solo alzare lo score
+  const vBase = { precipitation: 0, precipitation_probability: 0, wind_gusts_10m: 10, weather_code: 1, cape: 0, uv_index: 1 };
+  test('rischio freddo: −6,5 → score 2', scoreCanali(vBase, -6.5).freddo === 2);
+  test('rischio freddo: −11,05 → score 3', scoreCanali(vBase, -11.05).freddo === 3);
+}
+
+console.log('── Esposizione orografica ──');
+{
+  // Geometria: punto di destinazione su sfera
+  const nord = puntoADistanza({ lat: 46, lon: 11 }, 1000, 0);
+  test('puntoADistanza nord: +0,009° lat', vicino(nord.lat, 46.00899, 2e-4) && vicino(nord.lon, 11, 1e-6), JSON.stringify(nord));
+  const est = puntoADistanza({ lat: 46, lon: 11 }, 1000, 90);
+  test('puntoADistanza est: +0,013° lon', vicino(est.lon, 11.01295, 2e-4) && vicino(est.lat, 46, 2e-4), JSON.stringify(est));
+  const ritorno = puntoADistanza(est, 1000, 270);
+  test('andata e ritorno ≈ identità', vicino(ritorno.lat, 46, 1e-4) && vicino(ritorno.lon, 11, 1e-4));
+
+  // Sonde: numero e ordine deterministico
+  const camp = [{ lat: 46, lon: 11, eleM: 2000 }];
+  const sonde = puntiSondaEsposizione(camp);
+  test('25 sonde per campione', sonde.length === 25, String(sonde.length));
+  test('prima sonda = centro', sonde[0].lat === 46 && sonde[0].lon === 11);
+
+  // Griglie sintetiche: quote nell'ordine [centro, 8 direzioni × 3 raggi]
+  const quoteUniformi = (centro, dH1, dH2, dH3) =>
+    [centro, ...Array.from({ length: 8 }, () => [centro + dH1, centro + dH2, centro + dH3]).flat()];
+
+  // Cresta: il terreno scende in ogni direzione da entrambi i lati
+  const cresta = profiliDaQuote(camp, quoteUniformi(2000, -100, -200, -300));
+  test('cresta: fattore 1,3 ovunque', cresta[0].f8.every((f) => vicino(f, 1.3, 1e-9)), JSON.stringify(cresta[0].f8));
+  test('cresta: classe cresta', cresta[0].classi8.every((cl) => cl === 'cresta'));
+
+  // Conca: il terreno sale in ogni direzione → riparo pieno
+  const conca = profiliDaQuote(camp, quoteUniformi(2000, 150, 150, 150));
+  test('conca: fattore 0,6 ovunque', conca[0].f8.every((f) => vicino(f, 0.6, 1e-9)), JSON.stringify(conca[0].f8));
+
+  // Franchigia: dislivelli sotto i 30 m sono rumore del DEM
+  const piatto = profiliDaQuote(camp, quoteUniformi(2000, 25, 25, 25));
+  test('franchigia: ±25 m → neutro', piatto[0].f8.every((f) => f === 1));
+
+  // Sottovento asimmetrico: barriera +250 m a 600 m SOLO a NO (settore 7)
+  const qAsim = quoteUniformi(2000, 0, 0, 0);
+  qAsim[1 + 7 * 3 + 1] = 2250;
+  const asim = profiliDaQuote(camp, qAsim);
+  test('barriera a NO: vento da NO → 0,6', vicino(asim[0].f8[7], 0.6, 1e-9), String(asim[0].f8[7]));
+  test('barriera a NO: vento da SE → neutro', asim[0].f8[3] === 1);
+  test('barriera a NO: classe riparo', asim[0].classi8[7] === 'riparo');
+
+  // Pendio esposto: scende solo verso Est (settore 2), Ovest piatto
+  const qPendio = quoteUniformi(2000, 0, 0, 0);
+  qPendio[1 + 2 * 3 + 0] = 1850; // −150 m a 300 m
+  const pendio = profiliDaQuote(camp, qPendio);
+  test('pendio esposto: 1,15 (non 1,3)', vicino(pendio[0].f8[2], 1.15, 1e-9), String(pendio[0].f8[2]));
+  test('pendio esposto: classe pendio', pendio[0].classi8[2] === 'pendio');
+
+  // Clamp: dislivelli estremi non escono dal range [0,6, 1,3]
+  const estremo = profiliDaQuote(camp, quoteUniformi(2000, 900, 900, 900));
+  test('clamp: mai sotto 0,6', estremo[0].f8.every((f) => f >= 0.6));
+
+  // Interpolazione fra settori adiacenti, con wrap a 360°
+  const profilo = { f8: [1, 0.6, 1, 1, 1, 1, 1, 1], classi8: [null, 'riparo', null, null, null, null, null, null] };
+  test('interpolazione 22,5° fra N e NE', vicino(fattoreEsposizione(profilo, 22.5).fattore, 0.8, 1e-9));
+  const wrapP = { f8: [1, 1, 1, 1, 1, 1, 1, 0.6], classi8: Array(8).fill(null) };
+  test('wrap 337,5° fra NO e N', vicino(fattoreEsposizione(wrapP, 337.5).fattore, 0.8, 1e-9));
+  test('direzione null → fattore 1', fattoreEsposizione(profilo, null).fattore === 1);
+  test('profilo null → fattore 1', fattoreEsposizione(null, 90).fattore === 1);
+
+  // Degradazione: buchi DEM e centri nulli
+  const quoteBuche = quoteUniformi(2000, -100, -200, -300);
+  quoteBuche[0] = null;
+  const conEle = profiliDaQuote(camp, quoteBuche);
+  test('centro null: ripiega su eleM', conEle[0].f8.every((f) => vicino(f, 1.3, 1e-9)));
+  const neutro = profiliDaQuote([{ lat: 46, lon: 11, eleM: null }], quoteBuche);
+  test('centro e eleM null → neutro', neutro[0].f8.every((f) => f === 1));
+  test('quote non array → null', profiliDaQuote(camp, null) === null);
+
+  // Cache DEM: chiave per cella e FIFO
+  test('chiave a 3 decimali', chiaveDem(46.0004, 11.0004) === chiaveDem(46.0001, 11.0001));
+  test('celle diverse → chiavi diverse', chiaveDem(46.001, 11) !== chiaveDem(46.002, 11));
+  const tante = Array.from({ length: DEM_CACHE.maxVoci + 1 }, (_, i) => [`k${i}`, i]);
+  const dopo = cacheDemAggiorna(tante);
+  test('FIFO: tetto rispettato', dopo.ordine.length === DEM_CACHE.maxVoci, String(dopo.ordine.length));
+  test('FIFO: la più vecchia esce', !('k0' in dopo.quote) && 'k1' in dopo.quote);
+}
+
 console.log('── Copertura Vodafone (stima OpenCelliD) ──');
 {
   test('classe: 1 km → probabile', classificaCopertura(1).classe === 'probabile');
@@ -720,7 +885,6 @@ console.log('── Rischio ──');
   const attivi = canaliAttivi(temporale);
   test('canali attivi ordinati', attivi[0].nome === 'temporale' && attivi[0].score === 3);
 
-  test('percepita passa apparent_temperature', percepita({ apparent_temperature: 21.5 }) === 21.5);
   test('percepita null senza dato', percepita({}) === null);
 }
 

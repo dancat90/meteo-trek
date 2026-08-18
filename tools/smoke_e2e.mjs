@@ -18,6 +18,8 @@ import { VARIABILI_PRIMARIO } from '../js/config.js';
 import { oraApiUtc, dataLocaleAUtc, formattaOra } from '../js/tempo.js';
 import { percepita } from '../js/percepita.js';
 import { scoreCanali, fusione } from '../js/rischio.js';
+import { quoteDemCached } from '../js/api/dem.js';
+import { puntiSondaEsposizione, profiliDaQuote } from '../js/esposizione.js';
 
 let errori = 0;
 
@@ -146,6 +148,33 @@ try {
   }
 } catch (e) {
   console.error(`ERRORE quote celle: ${e.message}`);
+  errori++;
+}
+
+// Caso 5: esposizione orografica su DEM reale, auto-verificante con
+// asserzioni larghe (il DEM è vero): una cresta deve avere almeno un
+// settore amplificato, un fondovalle chiuso almeno un settore riparato
+try {
+  const cresta = { lat: 42.4695, lon: 13.5658, eleM: 2912 }; // Corno Grande
+  const valle = { lat: 46.593, lon: 7.909, eleM: 800 }; // Lauterbrunnen
+  const campioni = [cresta, valle];
+  const quote = await quoteDemCached(puntiSondaEsposizione(campioni));
+  const profili = profiliDaQuote(campioni, quote);
+  const fCresta = profili[0].f8;
+  const fValle = profili[1].f8;
+  console.log(`\n── Esposizione DEM reale ──`);
+  console.log(`Corno Grande f8: [${fCresta.map((f) => f.toFixed(2))}]`);
+  console.log(`Lauterbrunnen f8: [${fValle.map((f) => f.toFixed(2))}]`);
+  if (Math.max(...fCresta) < 1.1) {
+    console.error('ERRORE: nessun settore amplificato sulla cresta del Corno Grande');
+    errori++;
+  }
+  if (Math.min(...fValle) > 0.9) {
+    console.error('ERRORE: nessun settore riparato nel fondovalle di Lauterbrunnen');
+    errori++;
+  }
+} catch (e) {
+  console.error(`ERRORE esposizione DEM: ${e.message}`);
   errori++;
 }
 

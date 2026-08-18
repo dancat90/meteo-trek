@@ -48,6 +48,26 @@ export function interpolaGreatCircle(a, b, f) {
   };
 }
 
+// Punto di destinazione su sfera: da p {lat, lon}, distanza distM in
+// metri lungo l'azimut in gradi da nord (orario). Serve alle sonde DEM
+// dell'esposizione orografica.
+export function puntoADistanza(p, distM, azimutGradi) {
+  const d = distM / 1000 / R_TERRA; // distanza angolare
+  const az = azimutGradi * RAD;
+  const la1 = p.lat * RAD;
+  const lo1 = p.lon * RAD;
+  const sinLa2 =
+    Math.sin(la1) * Math.cos(d) + Math.cos(la1) * Math.sin(d) * Math.cos(az);
+  const la2 = Math.asin(Math.min(1, Math.max(-1, sinLa2)));
+  const lo2 =
+    lo1 +
+    Math.atan2(
+      Math.sin(az) * Math.sin(d) * Math.cos(la1),
+      Math.cos(d) - Math.sin(la1) * sinLa2
+    );
+  return { lat: la2 / RAD, lon: ((lo2 / RAD + 540) % 360) - 180 };
+}
+
 // ── Polilinea ────────────────────────────────────────────────────────────
 
 // Lunghezza totale e distanze cumulate (km) dei vertici di una polilinea

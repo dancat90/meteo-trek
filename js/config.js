@@ -241,6 +241,32 @@ export const SOGLIE_RISCHIO = {
   uv: [6, 8, 11],
 };
 
+// ── Esposizione orografica del vento ─────────────────────────────────────
+// Sonde DEM a 8 direzioni × 3 raggi attorno a ogni campione → fattore
+// moltiplicativo sul vento (riparo sottovento / cresta esposta), risolto
+// sulla direzione oraria del vento. Range ASIMMETRICO e prudente:
+// riduzione max −40% (sottostimare il vento è pericoloso: sottovento
+// restano raffiche turbolente e rotori), amplificazione max +30% (su
+// crinale le misure danno anche 1,5-2×, ma senza CFD si resta moderati).
+
+export const ESPOSIZIONE = {
+  // Raggi delle sonde (m): il DEM è a ~90 m, sotto ~250 m si ricade
+  // nella stessa cella; 300/600/1200 coprono dosso, versante e dorsale
+  raggiM: [300, 600, 1200],
+  franchigiaM: 30, // sotto: rumore GLO-90, irrilevante per il vento a 10 m
+  pendRiparo: 0.35, // pendenza della barriera sopravento per riduzione piena
+  pendCresta: 0.25, // pendenza dei versanti per amplificazione piena
+  fMin: 0.6,
+  fMax: 1.3,
+  ampCresta: 0.3,
+  ampPendio: 0.15,
+  sogliaMarcatore: 0.1, // |fattore−1| oltre cui la UI segnala la correzione
+};
+
+// Cache locale delle quote DEM (il terreno è statico): chiave lat,lon a
+// 3 decimali (~111 m ≈ la cella GLO-90), eviction FIFO oltre il tetto
+export const DEM_CACHE = { decimali: 3, maxVoci: 5000 };
+
 // ── Endpoint API ─────────────────────────────────────────────────────────
 
 export const API = {
