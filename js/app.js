@@ -1468,7 +1468,24 @@ function init() {
   initMappa('mappa');
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // Ricarica automatica quando un SW nuovo prende il controllo:
+    // senza, un deploy appare solo alla SECONDA apertura (la pagina
+    // corrente resta servita dalla cache della versione precedente).
+    // Guardie: mai alla prima visita in assoluto (nessun controller
+    // preesistente), mai oltre i primi 15 s (niente reload a sorpresa
+    // a form compilato: la novità arriverà all'apertura dopo), mai
+    // due volte (anti-loop).
+    const avevaController = !!navigator.serviceWorker.controller;
+    let ricaricata = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!avevaController || ricaricata || performance.now() > 15000) return;
+      ricaricata = true;
+      location.reload();
+    });
+    navigator.serviceWorker
+      .register('./sw.js')
+      .then((reg) => reg.update())
+      .catch(() => {});
   }
 }
 

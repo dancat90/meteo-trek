@@ -5,7 +5,7 @@
 // tile della mappa NON passano MAI dalla cache: devono essere fresche.
 // ─────────────────────────────────────────────────────────────────────────
 
-const CACHE = 'meteo-trek-v21';
+const CACHE = 'meteo-trek-v22';
 
 const CDN_LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
 
@@ -58,8 +58,29 @@ const ASSETS = [
   CDN_LEAFLET + 'leaflet.js',
 ];
 
+// Asset senza i quali l'offline non esiste: se mancano, l'install DEVE
+// fallire. Tutti gli altri sono tollerati (vedi precache).
+const CRITICI = ['./', './index.html'];
+
+async function precache() {
+  const c = await caches.open(CACHE);
+  // `cache: 'reload'` bypassa la cache HTTP del browser: senza, un
+  // deploy collaudato entro il max-age di GitHub Pages (10 min)
+  // ripopola la cache versionata NUOVA con i file VECCHI ancora
+  // freschi nella cache HTTP, congelando l'app alla versione
+  // precedente fino al bump successivo.
+  const rete = (u) => new Request(u, { cache: 'reload' });
+  await Promise.all(CRITICI.map((u) => c.add(rete(u))));
+  // Tolleranza sui secondari: `addAll` e' atomico, un solo 404 (file
+  // rinominato, CDN giu') lascerebbe in carica il SW vecchio per
+  // sempre e in silenzio. I mancanti ricadono sulla rete nel fetch.
+  await Promise.allSettled(
+    ASSETS.filter((u) => !CRITICI.includes(u)).map((u) => c.add(rete(u)))
+  );
+}
+
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+  e.waitUntil(precache());
   self.skipWaiting();
 });
 
