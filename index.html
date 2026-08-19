@@ -84,12 +84,15 @@
 
       <div class="riga-azioni">
         <button id="bottone-prevedi" type="submit" class="primario" disabled>Prevedi</button>
+        <button id="bottone-pianifica" type="button" disabled>Trova la finestra migliore (24-72 h)</button>
         <button id="bottone-ultimo" type="button" hidden>Ultimo risultato</button>
         <span id="caricamento" hidden aria-live="polite">Recupero dati…</span>
       </div>
     </form>
 
     <div id="messaggi" role="status" aria-live="polite"></div>
+
+    <section id="pianificatore" hidden></section>
 
     <section id="sezione-risultato" hidden>
       <div id="riepilogo" class="pannello" hidden></div>

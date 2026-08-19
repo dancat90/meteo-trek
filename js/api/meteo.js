@@ -180,6 +180,55 @@ export async function meteoModello({
   return { perCampione, copertura: coperti / campioni.length };
 }
 
+// ── Serie orarie complete per campione (pianificatore) ──────────────────
+//
+// A differenza di meteoModello NON collassa le serie al solo orario di
+// passaggio: restituisce le serie intere della finestra, che il
+// pianificatore ricampiona su ogni orario di partenza candidato.
+// Nota: con più di 25 campioni chiamataMultiLocalita spezza in blocchi
+// sequenziali e il pianificatore rallenta linearmente (oggi CAMPIONI_MAX
+// è 25: un solo blocco).
+
+// Normalizzazione pura di una località: { t0Ms, valori: {var: array} }
+// oppure null (fuori dominio: hourly assente o serie tutte null)
+export function serieNormalizzate(loc, variabili, modelloId) {
+  const hourly = loc?.hourly;
+  if (!hourly || !hourly.time?.length) return null;
+  const t0Ms = Date.parse(hourly.time[0] + 'Z');
+  if (!Number.isFinite(t0Ms)) return null;
+  const valori = {};
+  let almenoUno = false;
+  for (const v of variabili) {
+    const arr = serie(hourly, v, modelloId);
+    valori[v] = arr;
+    if (arr && arr.some((x) => x !== null && x !== undefined)) almenoUno = true;
+  }
+  return almenoUno ? { t0Ms, valori } : null;
+}
+
+export async function meteoSerie({ campioni, modello, variabili, startHour, endHour }) {
+  const parametri = {
+    models: modello.id,
+    hourly: variabili.join(','),
+    wind_speed_unit: 'kmh',
+    timezone: 'UTC',
+    start_hour: startHour,
+    end_hour: endHour,
+    cell_selection: 'land',
+  };
+  const quote = campioni.every((c) => Number.isFinite(c.eleM))
+    ? campioni.map((c) => Math.round(c.eleM))
+    : null;
+  const localita = await chiamataMultiLocalita(API.openMeteo, campioni, parametri, quote);
+  let coperti = 0;
+  const perCampione = campioni.map((c, i) => {
+    const s = serieNormalizzate(localita[i], variabili, modello.id);
+    if (s) coperti++;
+    return s;
+  });
+  return { perCampione, copertura: coperti / campioni.length };
+}
+
 // ── Chiamata unica ai modelli di confronto (fascia multi-modello) ───────
 //
 // Più modelli in una sola HTTP: la risposta arriva con i campi suffissati

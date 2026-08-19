@@ -44,7 +44,11 @@ import {
 } from '../js/api/meteo.js';
 import { dataLocaleAUtc, offsetMinuti, oraApiUtc } from '../js/tempo.js';
 import { affidabilita, etichettaAffidabilita, affidabilitaGlobale, classificaAffidabilitaGlobale } from '../js/affidabilita.js';
-import { scoreCanali, fusione, canaliAttivi } from '../js/rischio.js';
+import { scoreCanali, fusione, canaliAttivi, scoreConvezione, descriviConvezione } from '../js/rischio.js';
+import { correggiUv, classificaUv } from '../js/uv.js';
+import { numeroIt, campoCsv, rigaCsv, csvCampioni, csvAvvisi, csvCompleto, nomeFileCsv } from '../js/export-csv.js';
+import { candidatiPartenza, valoriAllOra, valutaFinestre } from '../js/pianificatore.js';
+import { serieNormalizzate } from '../js/api/meteo.js';
 import { percepita, utciDaValori, fondiWindchill, percepitaOperativa } from '../js/percepita.js';
 import { puntiControllo } from '../js/marcia.js';
 import { preparaGriglia, stimaRete, classificaCopertura } from '../js/copertura.js';
@@ -886,6 +890,339 @@ console.log('── Rischio ──');
   test('canali attivi ordinati', attivi[0].nome === 'temporale' && attivi[0].score === 3);
 
   test('percepita null senza dato', percepita({}) === null);
+}
+
+console.log('── Convezione (canale temporale potenziato) ──');
+{
+  test('CAPE 1200 da solo → 1', scoreConvezione({ cape: 1200 }) === 1);
+  test('CAPE 3000 da solo → 2', scoreConvezione({ cape: 3000 }) === 2);
+  test('LI −7 da solo → 2', scoreConvezione({ lifted_index: -7 }) === 2);
+  test('LI −3 da solo → 1', scoreConvezione({ lifted_index: -3 }) === 1);
+  test(
+    'CAPE 1200 + LI −3 concordi → 2',
+    scoreConvezione({ cape: 1200, lifted_index: -3 }) === 2
+  );
+  test(
+    'CIN 150 declassa CAPE 1200 a 1, non a 0',
+    scoreConvezione({ cape: 1200, convective_inhibition: 150 }) === 1
+  );
+  test(
+    'CIN 150 azzera il solo LI −3',
+    scoreConvezione({ lifted_index: -3, convective_inhibition: 150 }) === 0
+  );
+  test(
+    'LPI 2,5 ignora il declassamento CIN',
+    scoreConvezione({ lightning_potential: 2.5, convective_inhibition: 200 }) === 2
+  );
+  test('LPI 1 da solo → 1', scoreConvezione({ lightning_potential: 1 }) === 1);
+  test(
+    'CIN sentinella −1 ignorata',
+    scoreConvezione({ cape: 3000, convective_inhibition: -1 }) === 2
+  );
+  test('tutti null → 0', scoreConvezione({}) === 0);
+  test(
+    'mai 3 da evidenza indiretta',
+    scoreConvezione({ cape: 9999, lifted_index: -12, lightning_potential: 9 }) === 2
+  );
+  const wcVince = scoreCanali(
+    { precipitation: 0, weather_code: 95, cape: 500, convective_inhibition: 300, wind_gusts_10m: 10, uv_index: 2 },
+    15
+  );
+  test('wc 95 vince sul CIN → temporale 3', wcVince.temporale === 3);
+  const conCin = scoreCanali(
+    { precipitation: 0, weather_code: 2, cape: 1200, convective_inhibition: 150, wind_gusts_10m: 10, uv_index: 2 },
+    15
+  );
+  test('scoreCanali usa scoreConvezione (CIN)', conCin.temporale === 1, String(conCin.temporale));
+
+  const descr = descriviConvezione({ cape: 1800, li: -4.2, cin: 120, lpi: 1.2, fonteLi: 'GFS (NOAA)' });
+  test('descrizione contiene CAPE', descr.includes('CAPE 1800'));
+  test('descrizione contiene fonte LI', descr.includes('GFS'));
+  test('descrizione contiene blocco CIN', descr.includes('bloccata'));
+  test('descrizione a mani vuote → null', descriviConvezione({}) === null);
+  test('descrizione null → null', descriviConvezione(null) === null);
+  test('CIN sentinella fuori dalla descrizione', !(descriviConvezione({ cin: -1 }) || '').includes('CIN'));
+}
+
+console.log('── UV (correzione e scala OMS) ──');
+{
+  const su = correggiUv(6, { quotaSentieroM: 2000, quotaCellaM: 1000 });
+  test('UV 6 con +1000 m → 6,6', vicino(su.uv, 6.6, 0.01), String(su.uv));
+  const giu = correggiUv(6, { quotaSentieroM: 1000, quotaCellaM: 2000 });
+  test('delta negativo riduce', giu.uv < 6, String(giu.uv));
+  const clamp = correggiUv(6, { quotaSentieroM: 20000, quotaCellaM: 0 });
+  test('clamp del fattore quota a 1,6', vicino(clamp.fattoreQuota, 1.6, 0.001));
+  const neve = correggiUv(6, { quotaSentieroM: 1000, quotaCellaM: 1000, nevePrevista: true });
+  test('neve prevista ×1,25', vicino(neve.uv, 7.5, 0.01), String(neve.uv));
+  const senzaCella = correggiUv(6, { quotaSentieroM: 2000, quotaCellaM: null });
+  test('senza quota cella nessuna correzione', senzaCella.uv === 6 && senzaCella.deltaM === 0);
+  test('UV grezzo null → null', correggiUv(null, {}) === null);
+
+  test('UV 2,9 → basso', classificaUv(2.9).etichetta === 'basso');
+  test('UV 3 → moderato', classificaUv(3).etichetta === 'moderato');
+  test('UV 6 → alto', classificaUv(6).etichetta === 'alto');
+  test('UV 8 → molto alto', classificaUv(8).etichetta === 'molto alto');
+  test('UV 11 → estremo', classificaUv(11).etichetta === 'estremo');
+  test('UV null → null', classificaUv(null) === null);
+  test('fascia estremo ha il viola', classificaUv(12).colore === '#a371f7');
+}
+
+console.log('── Export CSV ──');
+{
+  test('numeroIt virgola decimale', numeroIt(12.34, 1) === '12,3');
+  test('numeroIt non finito → vuoto', numeroIt(null) === '' && numeroIt(NaN) === '');
+  test('campoCsv quota il punto e virgola', campoCsv('a;b') === '"a;b"');
+  test('campoCsv raddoppia le virgolette', campoCsv('a"b') === '"a""b"');
+  test('campoCsv quota gli a-capo', campoCsv('a\nb') === '"a\nb"');
+  test('rigaCsv termina in CRLF', rigaCsv(['a', 'b']) === 'a;b\r\n');
+
+  const fixture = {
+    nome: 'Anello del Gran Sasso',
+    fonte: 'gpx',
+    totKm: 12.3456,
+    dPlusM: 800,
+    dMinusM: 800,
+    tz: 'Europe/Rome',
+    partenzaIso: '2026-08-22T06:00:00.000Z',
+    arrivoIso: '2026-08-22T12:30:00.000Z',
+    generatoIl: Date.parse('2026-08-19T10:00:00Z'),
+    modello: { nome: 'ICON-2I (ItaliaMeteo/ARPAE)' },
+    avvisi: ['avviso con ; dentro'],
+    campioni: [
+      {
+        dCumKm: 0,
+        oraLocale: '08:00',
+        eleM: 1500,
+        percepitaC: 12.7,
+        score: 1,
+        canaliAttivi: [{ nome: 'pioggia', score: 1 }],
+        valori: { temperature_2m: 14.2, wind_speed_10m: 10, precipitation: 0.6 },
+        convezione: { cape: 800, li: -1.5, cin: 40, lpi: null },
+        uv: { uv: 7.2 },
+      },
+      { dCumKm: 5, oraLocale: '10:00', eleM: 2000, senzaDati: true, valori: {} },
+    ],
+  };
+  const csv = csvCompleto(fixture);
+  test('BOM in testa', csv.charCodeAt(0) === 0xfeff);
+  test('sezione TRATTI presente', csv.includes('TRATTI\r\n'));
+  test('sezione AVVISI presente', csv.includes('AVVISI\r\n'));
+  test('virgola decimale nei km', csv.includes('12,3'));
+  test('avviso con ; quotato', csv.includes('"avviso con ; dentro"'));
+  test('campione senza dati → n/d', csvCampioni(fixture).includes('n/d'));
+  test('UV corretto nel CSV', csvCampioni(fixture).includes('7,2'));
+  test('canali nel CSV', csvCampioni(fixture).includes('pioggia 1'));
+  test(
+    'nome file sanificato',
+    nomeFileCsv(fixture) === 'meteo-trek_anello-del-gran-sasso_2026-08-22.csv',
+    nomeFileCsv(fixture)
+  );
+  test('avvisi vuoti → riga dedicata', csvAvvisi({ avvisi: [] }).includes('nessun avviso'));
+}
+
+console.log('── Pianificatore: candidati ──');
+{
+  // 19/08/2026 10:00Z = 12:00 locali a Roma (ora legale, UTC+2)
+  const adessoMs = Date.parse('2026-08-19T10:00:00Z');
+  const cand = candidatiPartenza({ adessoMs, tz: 'Europe/Rome' });
+  test('nessun candidato nel passato', cand.every((c) => c.partenzaUtcMs >= adessoMs + 30 * 60000));
+  test(
+    'fascia 04-14 rispettata',
+    cand.every((c) => {
+      const h = parseInt(c.oraLocale, 10);
+      return h >= 4 && h <= 14;
+    })
+  );
+  test('ordinati e senza duplicati', cand.every((c, i) => i === 0 || c.partenzaUtcMs > cand[i - 1].partenzaUtcMs));
+  test(
+    'primo candidato oggi alle 13 locali',
+    cand[0].dataIso === '2026-08-19' && cand[0].oraLocale === '13:00',
+    JSON.stringify(cand[0])
+  );
+  test('tutti entro 72 h', cand.every((c) => c.partenzaUtcMs <= adessoMs + 72 * 3600000));
+  // Il 20/08 alle 08:00 locali = 06:00Z (ora legale)
+  const otto20 = cand.find((c) => c.dataIso === '2026-08-20' && c.oraLocale === '08:00');
+  test('conversione locale→UTC (estate)', otto20?.partenzaUtcMs === Date.parse('2026-08-20T06:00:00Z'));
+
+  // Cavallo del cambio ora legale→solare (25/10/2026): nessun duplicato,
+  // le 08:00 locali del 26/10 sono le 07:00Z (UTC+1)
+  const adessoOtt = Date.parse('2026-10-24T20:00:00Z');
+  const candOtt = candidatiPartenza({ adessoMs: adessoOtt, tz: 'Europe/Rome' });
+  const chiavi = candOtt.map((c) => `${c.dataIso}|${c.oraLocale}`);
+  test('cambio ora: nessun duplicato', new Set(chiavi).size === chiavi.length);
+  const otto26 = candOtt.find((c) => c.dataIso === '2026-10-26' && c.oraLocale === '08:00');
+  test('cambio ora: 08:00 del 26/10 = 07:00Z', otto26?.partenzaUtcMs === Date.parse('2026-10-26T07:00:00Z'));
+}
+
+console.log('── Pianificatore: estrazione e valutazione ──');
+{
+  const t0Ms = Date.parse('2026-08-20T00:00:00Z');
+  const nOre = 84;
+  // Serie costante con override per finestre orarie [da, a)
+  const costante = (v) => Array(nOre).fill(v);
+  const conFinestra = (v, da, a, dentro) => {
+    const arr = costante(v);
+    for (let h = da; h < a; h++) arr[h] = dentro;
+    return arr;
+  };
+  const serieBase = (override = {}) => ({
+    t0Ms,
+    valori: {
+      temperature_2m: costante(15),
+      apparent_temperature: costante(14),
+      relative_humidity_2m: costante(50),
+      precipitation: costante(0),
+      precipitation_probability: costante(5),
+      wind_speed_10m: costante(10),
+      wind_gusts_10m: costante(20),
+      wind_direction_10m: costante(0),
+      weather_code: costante(1),
+      cape: costante(100),
+      ...override,
+    },
+  });
+
+  // valoriAllOra: stretta, non ±3
+  const conBuchi = { t0Ms, valori: { x: [1, null, null, null, 5] } };
+  test('valoriAllOra indice esatto', valoriAllOra(conBuchi, t0Ms + 4 * 3600000).valori.x === 5);
+  test('valoriAllOra buco singolo ±1', valoriAllOra(conBuchi, t0Ms + 1 * 3600000).valori.x === 1);
+  test(
+    'valoriAllOra NON eredita il ±3',
+    valoriAllOra(conBuchi, t0Ms + 2 * 3600000) === null,
+    JSON.stringify(valoriAllOra(conBuchi, t0Ms + 2 * 3600000))
+  );
+  test('valoriAllOra fuori finestra → null', valoriAllOra(conBuchi, t0Ms - 3600000) === null);
+
+  // Scenario: temporale (wc 95) nelle ore 30-35 della serie
+  const campioni = [
+    { lat: 46, lon: 11, eleM: 1500, dCumKm: 0 },
+    { lat: 46.05, lon: 11, eleM: 1800, dCumKm: 6 },
+  ];
+  const serieTemporale = [
+    serieBase({ weather_code: conFinestra(1, 30, 36, 95) }),
+    serieBase({ weather_code: conFinestra(1, 30, 36, 95) }),
+  ];
+  const candidati = [
+    // attraversa la finestra: partenza ora 29, arrivo ora 33
+    { partenzaUtcMs: t0Ms + 29 * 3600000, dataIso: '2026-08-21', oraLocale: '07:00' },
+    // la evita del tutto
+    { partenzaUtcMs: t0Ms + 40 * 3600000, dataIso: '2026-08-21', oraLocale: '18:00' },
+  ];
+  const finestre = valutaFinestre({
+    candidati,
+    offsetMin: [0, 240],
+    campioni,
+    serieCampioni: serieTemporale,
+    orizzonteMs: t0Ms + 84 * 3600000,
+    arrivoLatLon: null,
+    durataTotaleMin: 240,
+  });
+  test('candidato nel temporale → score 3', finestre[0].scoreMax === 3, JSON.stringify(finestre[0]));
+  test('canale peggiore = temporale', finestre[0].peggior?.canali?.[0]?.nome === 'temporale');
+  test('candidato fuori → score 0', finestre[1].scoreMax === 0);
+  test(
+    'distribuzione somma ai campioni',
+    finestre[0].distribuzione.reduce((s, n) => s + n, 0) === campioni.length
+  );
+
+  // Oltre orizzonte: nessuno score
+  const oltre = valutaFinestre({
+    candidati: [candidati[1]],
+    offsetMin: [0, 240],
+    campioni,
+    serieCampioni: serieTemporale,
+    orizzonteMs: t0Ms + 42 * 3600000, // arrivo a 44h > 42h
+    arrivoLatLon: null,
+    durataTotaleMin: 240,
+  })[0];
+  test('oltre orizzonte → stato dichiarato', oltre.stato === 'oltreOrizzonte');
+  test('oltre orizzonte → niente numeri finti', oltre.scoreMax === null && oltre.distribuzione === null);
+
+  // Bump PoP dall'ensemble con mm sotto soglia (pioggia 0,3 mm, PoP nulla)
+  const seriePop = [
+    serieBase({ precipitation: costante(0.3), precipitation_probability: costante(null) }),
+    serieBase({ precipitation: costante(0.3), precipitation_probability: costante(null) }),
+  ];
+  const popSerie = [
+    { t0Ms, popKN: costante(80) },
+    { t0Ms, popKN: costante(80) },
+  ];
+  const conPop = valutaFinestre({
+    candidati: [candidati[0]],
+    offsetMin: [0, 240],
+    campioni,
+    serieCampioni: seriePop,
+    popSerie,
+    orizzonteMs: t0Ms + 84 * 3600000,
+    arrivoLatLon: null,
+    durataTotaleMin: 240,
+  })[0];
+  const senzaPop = valutaFinestre({
+    candidati: [candidati[0]],
+    offsetMin: [0, 240],
+    campioni,
+    serieCampioni: seriePop,
+    popSerie: null,
+    orizzonteMs: t0Ms + 84 * 3600000,
+    arrivoLatLon: null,
+    durataTotaleMin: 240,
+  })[0];
+  test('PoP ensemble → bump pioggia a 1', conPop.scoreMax === 1, JSON.stringify(conPop.peggior));
+  test('senza PoP niente bump', senzaPop.scoreMax === 0);
+
+  // Esposizione risolta sull'ORA: direzione del vento che cambia fra le
+  // ore fa cambiare lo score fra candidati contigui (raffiche 55 km/h:
+  // sotto soglia col fattore 0,6, sopra col fattore 1,3)
+  const profilo = { f8: [1.3, 1.3, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6], classi8: ['cresta', 'cresta', 'riparo', 'riparo', 'riparo', 'riparo', 'riparo', 'riparo'] };
+  const serieVento = [
+    serieBase({ wind_gusts_10m: costante(55), wind_direction_10m: conFinestra(180, 10, 12, 0) }),
+  ];
+  const ventoRes = valutaFinestre({
+    candidati: [
+      { partenzaUtcMs: t0Ms + 10 * 3600000, dataIso: 'x', oraLocale: '10:00' }, // dir 0 → cresta 1,3
+      { partenzaUtcMs: t0Ms + 14 * 3600000, dataIso: 'x', oraLocale: '14:00' }, // dir 180 → riparo 0,6
+    ],
+    offsetMin: [0],
+    campioni: [campioni[0]],
+    serieCampioni: serieVento,
+    profiliEspo: [profilo],
+    orizzonteMs: t0Ms + 84 * 3600000,
+    arrivoLatLon: null,
+    durataTotaleMin: 60,
+  });
+  test('esposizione oraria cambia lo score', ventoRes[0].scoreMax > ventoRes[1].scoreMax, JSON.stringify(ventoRes.map((f) => f.scoreMax)));
+
+  // Tramonto: arrivo 30 min prima → stretto; 2 h dopo → dopo
+  const tramontoRif = albaTramontoUtc(new Date('2026-08-22T12:00:00Z'), 42, 13).tramontoUtc;
+  const serie84 = [serieBase()];
+  const trRes = valutaFinestre({
+    candidati: [
+      { partenzaUtcMs: tramontoRif.getTime() - 30 * 60000 - 60 * 60000, dataIso: 'x', oraLocale: 'y' },
+      { partenzaUtcMs: tramontoRif.getTime() + 2 * 3600000 - 60 * 60000, dataIso: 'x', oraLocale: 'y' },
+    ],
+    offsetMin: [0],
+    campioni: [{ lat: 42, lon: 13, eleM: 1000, dCumKm: 0 }],
+    serieCampioni: serie84,
+    orizzonteMs: Number.POSITIVE_INFINITY,
+    arrivoLatLon: { lat: 42, lon: 13 },
+    durataTotaleMin: 60,
+  });
+  test('arrivo a 30 min dal tramonto → stretto', trRes[0].tramonto?.classe === 'stretto', JSON.stringify(trRes[0].tramonto));
+  test('arrivo dopo il tramonto → dopo', trRes[1].tramonto?.classe === 'dopo' && trRes[1].tramonto.margineMin < 0);
+
+  // serieNormalizzate: da una località finta a {t0Ms, valori}
+  const loc = {
+    hourly: {
+      time: ['2026-08-20T00:00', '2026-08-20T01:00'],
+      temperature_2m: [10, 11],
+      cape: [null, 200],
+    },
+  };
+  const norm = serieNormalizzate(loc, ['temperature_2m', 'cape'], 'icon_d2');
+  test('serieNormalizzate: t0Ms corretto', norm.t0Ms === t0Ms);
+  test('serieNormalizzate: serie intere', norm.valori.temperature_2m[1] === 11 && norm.valori.cape[0] === null);
+  test('serieNormalizzate: fuori dominio → null', serieNormalizzate({ hourly: { time: ['2026-08-20T00:00'], temperature_2m: [null] } }, ['temperature_2m'], 'x') === null);
+  test('serieNormalizzate: hourly assente → null', serieNormalizzate({}, ['temperature_2m'], 'x') === null);
 }
 
 console.log('');

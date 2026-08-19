@@ -11,6 +11,8 @@ let mappa = null;
 let layerTraccia = null;
 let markerCampioni = [];
 let fallbackFatto = false;
+let boundsTraccia = null;
+let bottoneCentra = null;
 
 // Escape HTML per dati remoti interpolati nei popup (anti-XSS)
 export const escapeHtml = (s) =>
@@ -40,7 +42,31 @@ export function initMappa(idElemento) {
   mappa.setView([44, 11], 6);
   layerTraccia = L.layerGroup().addTo(mappa);
   aggiungiLegenda();
+  aggiungiBottoneCentra();
   return mappa;
+}
+
+// Bottone «ricentra il percorso»: riporta la vista sui bounds della
+// traccia corrente. Nascosto finché non c'è una traccia disegnata.
+function aggiungiBottoneCentra() {
+  const controllo = L.control({ position: 'topleft' });
+  controllo.onAdd = () => {
+    const div = L.DomUtil.create('div', 'leaflet-bar bottone-centra');
+    const a = L.DomUtil.create('a', '', div);
+    a.href = '#';
+    a.title = 'Ricentra il percorso';
+    a.setAttribute('role', 'button');
+    a.setAttribute('aria-label', 'Ricentra il percorso nella visuale');
+    a.innerHTML = '⌖';
+    L.DomEvent.on(a, 'click', (e) => {
+      L.DomEvent.stop(e);
+      if (boundsTraccia) mappa.fitBounds(boundsTraccia, { padding: [28, 28] });
+    });
+    div.style.display = 'none';
+    bottoneCentra = div;
+    return div;
+  };
+  controllo.addTo(mappa);
 }
 
 function aggiungiLegenda() {
@@ -63,6 +89,8 @@ function aggiungiLegenda() {
 export function pulisciTraccia() {
   layerTraccia?.clearLayers();
   markerCampioni = [];
+  boundsTraccia = null;
+  if (bottoneCentra) bottoneCentra.style.display = 'none';
 }
 
 // Disegna la traccia colorata e i marker dei campioni.
@@ -121,10 +149,9 @@ export function disegnaTraccia({ traccia, campioni }, onSelezione = null) {
   // Il container può essere appena uscito da [hidden]: senza
   // invalidateSize Leaflet userebbe la size (0,0) cacheata all'init
   mappa.invalidateSize();
-  mappa.fitBounds(
-    L.latLngBounds(traccia.map((p) => [p.lat, p.lon])),
-    { padding: [28, 28] }
-  );
+  boundsTraccia = L.latLngBounds(traccia.map((p) => [p.lat, p.lon]));
+  mappa.fitBounds(boundsTraccia, { padding: [28, 28] });
+  if (bottoneCentra) bottoneCentra.style.display = '';
 }
 
 // Apre il popup del campione i (selezione arrivata da tabella o profilo)

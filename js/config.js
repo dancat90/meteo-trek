@@ -168,6 +168,14 @@ export const VARIABILI_PRIMARIO = [
   'is_day',
   'uv_index',
   'cape',
+  // Indici convettivi aggiuntivi (canale temporale potenziato).
+  // lifted_index: null su TUTTI i primari regionali (arriva da GFS via
+  // chiamata di confronto); lightning_potential (LPI): solo ICON-2I,
+  // ICON-D2 e best_match; convective_inhibition: ovunque, ma MeteoSwiss
+  // risponde con sentinella -1 quando non calcolabile
+  'lifted_index',
+  'convective_inhibition',
+  'lightning_potential',
   // Ingressi radiativi per la MRT dell'UTCI (js/radiante.js)
   'direct_radiation',
   'direct_normal_irradiance',
@@ -210,6 +218,10 @@ export const VARIABILI_CONFRONTO = [
   // Visibilità prevista: la fornisce GFS (ECMWF risponde null, innocuo);
   // i modelli primari non ce l'hanno, quindi viaggia in questa chiamata
   'visibility',
+  // Lifted index e UV: stessi ponti GFS della visibilità (i primari
+  // regionali rispondono null su entrambi, verificato con sonda 08/2026)
+  'lifted_index',
+  'uv_index',
   ...VARIABILI_UTCI,
 ];
 
@@ -231,6 +243,17 @@ export const SOGLIE_RISCHIO = {
   raffKmh: [40, 60, 80],
   // CAPE (J/kg): potenziale convettivo moderato / alto
   cape: [1000, 2500],
+  // Lifted Index (adimensionale, negativo = instabile): letteratura NWS,
+  // ≤ −2 instabilità moderata, ≤ −6 forte
+  li: [-2, -6],
+  // CIN (J/kg, magnitudine POSITIVA su Open-Meteo): ≥50 inibizione
+  // significativa (solo nota testuale), ≥100 declassa di 1 lo score
+  // indiretto ma MAI sotto 1 con CAPE sopra soglia (in montagna il
+  // trigger orografico erode il CIN più che in pianura: prudenza)
+  cin: [50, 100],
+  // LPI (J/kg, Lynn & Yair 2010, solo ICON-2I/D2): >0,5 fulminazione
+  // possibile, ≥2 segnale netto (soglie operative sperimentali)
+  lpi: [0.5, 2],
   // Codici WMO temporale (weather_code)
   codiciTemporale: [95, 96, 99],
   // Percepita fredda (°C): sotto queste soglie score 1 / 2 / 3
@@ -299,3 +322,59 @@ export const ETICHETTE_VISIBILITA = ['scarsa', 'ridotta', 'discreta', 'buona', '
 
 // Ensemble per la probabilità di precipitazione: primario e fallback
 export const MODELLI_ENSEMBLE = ['icon_seamless', 'ecmwf_ifs025'];
+
+// Avviso aggregato temporali: fascia oraria locale critica e score minimo
+// del canale temporale perché un tratto conti nel contatore
+export const AVVISO_TEMPORALE = { oreLocali: [12, 18], scoreMin: 2 };
+
+// ── Scala UV OMS ─────────────────────────────────────────────────────────
+// 5 fasce: coerente con la palette rischio (stessa famiglia cromatica su
+// fondo scuro) ma distinta — la 5ª fascia viola esiste SOLO per l'UV e
+// viene resa come badge-pillola con etichetta, mai come chip del rischio
+export const UV_SCALA = {
+  soglie: [3, 6, 8, 11],
+  etichette: ['basso', 'moderato', 'alto', 'molto alto', 'estremo'],
+  colori: ['#2ea043', '#f2cc60', '#f0883e', '#da3633', '#a371f7'],
+};
+
+// ── Pianificatore finestre di partenza (24-72 h) ─────────────────────────
+
+export const PIANIFICATORE = {
+  orizzonteOre: 72, // ore da adesso coperte dalla griglia dei candidati
+  passoOre: 1, // i modelli sono orari: passi più fini duplicano le celle
+  fasciaOreLocali: [4, 14], // partenze plausibili, ora locale del percorso
+  margineFuturoMin: 30, // primo candidato: almeno fra 30 minuti
+  margineTramontoMin: 60, // sotto questo margine l'arrivo è «stretto»
+};
+
+// Variabili della chiamata dedicata del pianificatore: solo quelle che
+// alimentano rischio e percepita. lifted_index e uv_index NON viaggiano
+// qui (null sui primari regionali, e il pianificatore non fa la chiamata
+// di confronto): semplificazione dichiarata nella legenda del pannello.
+export const VARIABILI_PIANIFICATORE = [
+  'temperature_2m',
+  'relative_humidity_2m',
+  'apparent_temperature',
+  'precipitation',
+  'precipitation_probability',
+  'wind_speed_10m',
+  'wind_gusts_10m',
+  'wind_direction_10m',
+  'shortwave_radiation',
+  'cloud_cover',
+  'weather_code',
+  'cape',
+  'convective_inhibition',
+  'lightning_potential',
+  // Ingressi radiativi per la MRT dell'UTCI
+  'direct_radiation',
+  'direct_normal_irradiance',
+  'terrestrial_radiation',
+];
+
+// Correzione UV: +10%/1000 m (OMS/WMO) sul DELTA quota sentiero−cella
+// modello (assunzione dichiarata: l'UV Open-Meteo è alla quota della
+// cella). Neve: l'albedo può aggiungere fino a +80% (OMS), ma "neve al
+// suolo" non è ricavabile dai dati → +25% prudente, applicato SOLO con
+// nevicata prevista al passaggio; i nevai preesistenti non sono rilevati
+export const UV_CORREZIONE = { pctPer1000m: 10, fattoreNeve: 1.25, clampFattore: [0.7, 1.6] };

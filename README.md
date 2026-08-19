@@ -28,10 +28,33 @@ App: https://dancat90.github.io/meteo-trek/
    che sali in un'ora: 400 m/h è il riferimento dei cartelli CAI).
 3. Prevedi: tabella per tratto, mappa colorata per rischio, profilo
    altimetrico con gli orari di passaggio, tabella di marcia con punti
-   di controllo ogni 15 minuti (esportabile in PDF).
+   di controllo ogni 15 minuti (esportabile in PDF e in CSV per Excel).
+4. In alternativa «Trova la finestra migliore (24-72 h)»: heatmap
+   giorno × ora delle partenze candidate (fascia 04-14 locale), cella
+   colorata sul rischio massimo lungo il percorso, badge tramonto,
+   click sulla cella → dettaglio e previsione completa su quell'orario.
+   Il pianificatore usa il solo modello primario dell'area (celle grigie
+   oltre il suo orizzonte) e resta indicativo: la previsione completa è
+   il riferimento.
 
 L'ultima previsione resta consultabile offline (bottone «Ultimo
 risultato»): utile sul sentiero senza campo.
+
+## Rischio temporali e UV
+
+Il canale temporale combina CAPE, lifted index (ponte GFS: i primari
+regionali non lo espongono), potenziale di fulminazione LPI (solo
+ICON-2I/D2) e CIN come inibitore (magnitudine ≥100 J/kg declassa di 1
+lo score indiretto, mai sotto 1 con CAPE sopra soglia: il sollevamento
+orografico rompe il tappo). L'evidenza indiretta non supera mai lo
+score 2: il weather_code temporalesco resta l'unico 3 diretto. Un
+avviso aggregato conta i tratti pomeridiani (12-18) con canale ≥2.
+
+L'indice UV (ponte GFS) è corretto per quota (+10%/1000 m sul delta
+sentiero−cella) e neve prevista (+25%, i nevai preesistenti non sono
+rilevabili) e classificato sulla scala OMS a 5 fasce: badge nella
+colonna sole da «alto» in su, trasparenza completa nel dettaglio.
+Il canale caldo usa l'UV corretto.
 
 ## Come stima i tempi
 

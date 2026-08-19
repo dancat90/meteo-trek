@@ -262,6 +262,16 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
 .forbice-ampia { color: #da3633; }
 .neve { color: var(--accento); }
 .in-nube { color: #f2cc60; font-weight: 700; }
+/* Badge UV a pillola (scala OMS): testo scuro leggibile su ogni fascia */
+.badge-uv {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #0d1117;
+  white-space: nowrap;
+}
 
 /* ── Aree protette ── */
 .aree-protette {
@@ -283,7 +293,8 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
   align-items: center;
   margin-bottom: 10px;
 }
-.marcia-testata button { margin-left: auto; }
+/* Il primo bottone spinge il gruppo a destra; i successivi si accodano */
+.marcia-testata button:first-of-type { margin-left: auto; }
 .mappa-marcia {
   height: 40vh;
   min-height: 260px;
@@ -346,4 +357,60 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   border-top: 1px solid var(--bordo);
   color: var(--testo-secondario);
   font-size: 0.78rem;
+}
+
+/* ── Pianificatore finestre di partenza ── */
+#pianificatore { max-width: 1500px; margin: 0 auto; }
+.pianificatore .griglia-pianificatore {
+  display: grid;
+  gap: 3px;
+  margin-top: 10px;
+  overflow-x: auto;
+}
+.cella-griglia {
+  min-height: 40px;
+  min-width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.cella-griglia.intestazione {
+  background: none;
+  color: var(--testo-secondario);
+  font-weight: 400;
+  font-size: 0.78rem;
+  min-height: 24px;
+}
+.cella-griglia.riga-giorno { justify-content: flex-end; padding-right: 6px; white-space: nowrap; }
+.cella-griglia.vuota { background: transparent; }
+.cella-griglia.grigia { background: #21262d; color: var(--testo-secondario); cursor: help; }
+.cella-griglia.attiva { color: #0d1117; cursor: pointer; }
+.cella-griglia.attiva:hover { filter: brightness(1.15); }
+.cella-griglia.attiva.selezionata { outline: 2px solid #2f81f7; outline-offset: 1px; }
+.cella-griglia .tramonto-badge { font-weight: 400; font-size: 0.8rem; }
+.cella-griglia .parziale { font-weight: 400; }
+.legenda-pianificatore { margin-top: 10px; line-height: 1.5; }
+.dettaglio-pianificatore {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--bordo);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+.dettaglio-pianificatore .chip { vertical-align: middle; }
+.dettaglio-pianificatore .scegli-finestra { align-self: flex-start; }
+
+/* ── Bottone «ricentra il percorso» sulla mappa ── */
+.bottone-centra a {
+  font-size: 1.3rem;
+  line-height: 26px;
+  text-align: center;
+  text-decoration: none;
 }

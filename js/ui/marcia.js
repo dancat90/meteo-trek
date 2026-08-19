@@ -16,6 +16,7 @@ import { escapeHtml } from './mappa.js';
 import { cellaNuvole } from './tabella.js';
 import { formattaOra } from '../tempo.js';
 import { COLORI_SEVERITA } from '../config.js';
+import { csvCompleto, nomeFileCsv } from '../export-csv.js';
 
 const TILE_URL = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png';
 const ATTRIBUZIONE =
@@ -168,6 +169,7 @@ export function renderMarcia(el, r) {
         arrivo ${escapeHtml(formattaOra(new Date(r.arrivoIso), r.tz))} ·
         ${escapeHtml(testataTramonto(r))}
         <button id="bottone-pdf-marcia" type="button">Esporta PDF</button>
+        <button id="bottone-csv-marcia" type="button">Esporta CSV</button>
       </div>
       ${allarme}
       <div class="mappa-marcia" aria-label="Mappa dei punti di controllo numerati"></div>
@@ -197,6 +199,16 @@ export function renderMarcia(el, r) {
   el.querySelector('#bottone-pdf-marcia')?.addEventListener('click', () =>
     esportaPdf(r, righe, puntiMappa)
   );
+  // CSV: download diretto via Blob nel gesto utente (niente popup-blocker)
+  el.querySelector('#bottone-csv-marcia')?.addEventListener('click', () => {
+    const blob = new Blob([csvCompleto(r)], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nomeFileCsv(r);
+    a.click();
+    URL.revokeObjectURL(url);
+  });
   disegnaMappaMarcia(el, r, puntiMappa);
 }
 

@@ -43,6 +43,72 @@ export async function ensemblePrecipitazione({ campioni, orari, startHour, endHo
   return null;
 }
 
+// PoP k/N per ORA (non al solo passaggio): per il pianificatore in area
+// ICON-2I. hourly: solo precipitation. Restituisce { modello,
+// perCampione: [{t0Ms, popKN: number[]} | null] } oppure null.
+export async function ensemblePopSerie({ campioni, startHour, endHour }) {
+  for (const modello of MODELLI_ENSEMBLE) {
+    try {
+      const perCampione = await unEnsemblePopSerie(modello, campioni, startHour, endHour);
+      if (perCampione) return { modello, perCampione };
+    } catch {
+      // si passa al modello ensemble successivo
+    }
+  }
+  return null;
+}
+
+async function unEnsemblePopSerie(modello, campioni, startHour, endHour) {
+  const localita = [];
+  for (let i = 0; i < campioni.length; i += MAX_PUNTI_PER_CHIAMATA) {
+    const blocco = campioni.slice(i, i + MAX_PUNTI_PER_CHIAMATA);
+    const query = new URLSearchParams({
+      latitude: blocco.map((p) => clampLat(p.lat)).join(','),
+      longitude: blocco.map((p) => wrapLon(p.lon)).join(','),
+      models: modello,
+      hourly: 'precipitation',
+      timezone: 'UTC',
+      start_hour: startHour,
+      end_hour: endHour,
+    });
+    const r = await fetch(`${API.openMeteoEnsemble}?${query.toString()}`, {
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!r.ok) return null;
+    const dati = parseSanificato(await r.text());
+    localita.push(...(Array.isArray(dati) ? dati : [dati]));
+  }
+
+  let validi = 0;
+  const perCampione = campioni.map((c, i) => {
+    const hourly = localita[i]?.hourly;
+    if (!hourly?.time?.length) return null;
+    const t0Ms = Date.parse(hourly.time[0] + 'Z');
+    if (!Number.isFinite(t0Ms)) return null;
+    // Colonne membro: k/N calcolato colonna per colonna, stessa soglia
+    // anti-drizzle della voce puntuale
+    const membri = Object.keys(hourly).filter((k) => k.startsWith('precipitation'));
+    if (membri.length < 3) return null;
+    const nOre = hourly.time.length;
+    const popKN = new Array(nOre).fill(null);
+    for (let h = 0; h < nOre; h++) {
+      let n = 0;
+      let sopra = 0;
+      for (const m of membri) {
+        const v = hourly[m]?.[h];
+        if (v === null || v === undefined) continue;
+        n++;
+        if (v >= SOGLIA_DRIZZLE_MM) sopra++;
+      }
+      if (n >= 3) popKN[h] = Math.round((100 * sopra) / n);
+    }
+    validi++;
+    return { t0Ms, popKN };
+  });
+
+  return validi / campioni.length >= 0.5 ? perCampione : null;
+}
+
 async function unEnsemble(modello, campioni, orari, startHour, endHour) {
   const localita = [];
   for (let i = 0; i < campioni.length; i += MAX_PUNTI_PER_CHIAMATA) {

@@ -24,6 +24,70 @@ function aSoglieDiscendenti(valore, soglie) {
   return score;
 }
 
+// Score convettivo indiretto 0-2 da CAPE + lifted index + LPI, con il
+// CIN come inibitore. Principio del cap invariato: l'evidenza indiretta
+// non produce mai 3 (il weather_code temporalesco resta l'unico 3 diretto).
+// v: {cape, lifted_index, convective_inhibition, lightning_potential}
+export function scoreConvezione(v) {
+  const sCape = Number.isFinite(v?.cape)
+    ? v.cape >= S.cape[1] ? 2 : v.cape >= S.cape[0] ? 1 : 0
+    : 0;
+  const sLi = Number.isFinite(v?.lifted_index)
+    ? v.lifted_index <= S.li[1] ? 2 : v.lifted_index <= S.li[0] ? 1 : 0
+    : 0;
+  const sLpi = Number.isFinite(v?.lightning_potential)
+    ? v.lightning_potential >= S.lpi[1] ? 2 : v.lightning_potential >= S.lpi[0] ? 1 : 0
+    : 0;
+
+  let s = Math.max(sCape, sLi, sLpi);
+  // Evidenze concordanti energia (CAPE) + instabilità (LI): segnale robusto
+  if (sCape >= 1 && sLi >= 1) s = 2;
+
+  // Inibitore CIN: magnitudine positiva su Open-Meteo; valori negativi
+  // (sentinella -1 di MeteoSwiss = non calcolabile) trattati come assenti.
+  // Declassa di 1 ma mai sotto 1 con CAPE sopra soglia: in montagna il
+  // sollevamento orografico rompe il cap più facilmente che in pianura.
+  // LPI ≥ soglia alta ignora il declassamento: ingloba già la dinamica.
+  const cin = v?.convective_inhibition;
+  if (Number.isFinite(cin) && cin >= 0 && cin >= S.cin[1] && sLpi < 2) {
+    s = Math.max(sCape >= 1 ? 1 : 0, s - 1);
+  }
+  return Math.min(2, s);
+}
+
+// Riga «convezione» per il dettaglio tabella: solo i campi presenti,
+// null se non c'è nessun dato. fonteLi = nome del modello ponte (GFS)
+// quando il lifted index non viene dal primario.
+export function descriviConvezione(v) {
+  if (!v) return null;
+  const parti = [];
+  if (Number.isFinite(v.cape)) {
+    const nota = v.cape >= S.cape[1] ? 'molto alto' : v.cape >= S.cape[0] ? 'alto' : 'basso';
+    parti.push(`CAPE ${Math.round(v.cape)} J/kg (${nota})`);
+  }
+  if (Number.isFinite(v.li)) {
+    const nota = v.li <= S.li[1] ? 'molto instabile' : v.li <= S.li[0] ? 'instabile' : 'stabile';
+    const fonte = v.fonteLi ? `${v.fonteLi}: ` : '';
+    parti.push(`LI ${v.li.toFixed(1).replace('.', ',')} (${fonte}${nota})`);
+  }
+  const cin = v.cin;
+  if (Number.isFinite(cin) && cin >= 0) {
+    const nota =
+      cin >= S.cin[1]
+        ? 'convezione bloccata: serve un innesco forte'
+        : cin >= S.cin[0]
+          ? 'inibizione significativa'
+          : 'nessun freno';
+    parti.push(`CIN ${Math.round(cin)} J/kg (${nota})`);
+  }
+  if (Number.isFinite(v.lpi)) {
+    const nota =
+      v.lpi >= S.lpi[1] ? 'fulmini probabili' : v.lpi >= S.lpi[0] ? 'fulmini possibili' : 'trascurabile';
+    parti.push(`LPI ${v.lpi.toFixed(1).replace('.', ',')} J/kg (${nota})`);
+  }
+  return parti.length ? `convezione: ${parti.join(' · ')}` : null;
+}
+
 // valori: oggetto {nomeVar: valore} del modello primario al passaggio
 // percepitaC: temperatura percepita (può differire da valori se in
 // futuro arriverà l'UTCI)
@@ -44,13 +108,11 @@ export function scoreCanali(valori, percepitaC) {
   }
 
   // Temporale: il weather_code temporalesco è evidenza diretta (score 3);
-  // il CAPE da solo è potenziale, non temporale in atto: cap a 2
-  let temporale = 0;
-  if (S.codiciTemporale.includes(valori.weather_code)) temporale = 3;
-  else if (Number.isFinite(valori.cape)) {
-    if (valori.cape >= S.cape[1]) temporale = 2;
-    else if (valori.cape >= S.cape[0]) temporale = 1;
-  }
+  // gli indici convettivi (CAPE/LI/LPI, CIN inibitore) sono potenziale,
+  // non temporale in atto: cap a 2 dentro scoreConvezione
+  const temporale = S.codiciTemporale.includes(valori.weather_code)
+    ? 3
+    : scoreConvezione(valori);
 
   const vento = aSoglie(valori.wind_gusts_10m, S.raffKmh);
   const freddo = aSoglieDiscendenti(percepitaC, S.freddoC);

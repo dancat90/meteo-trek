@@ -7,6 +7,7 @@
 import { COLORI_SEVERITA, ETICHETTE_RISCHIO, ESPOSIZIONE } from '../config.js';
 import { intensitaSolare } from '../nuvole.js';
 import { classificaAffidabilitaGlobale } from '../affidabilita.js';
+import { descriviConvezione } from '../rischio.js';
 import { escapeHtml } from './mappa.js';
 
 // Descrizioni italiane dei weather code WMO
@@ -38,12 +39,17 @@ const num = (v, dec = 0, unita = '') =>
 const CLASSE_ACCORDO = { alta: 'forbice-ok', media: 'forbice-media', bassa: 'forbice-ampia' };
 
 // Cella sole: intensità qualitativa, con «(velato)» quando il sole resta
-// forte sotto una copertura quasi totale (velo alto luminoso)
-export function cellaSole(wm2, coperturaPct) {
+// forte sotto una copertura quasi totale (velo alto luminoso). Il badge
+// UV appare solo da fascia «alto» in su: sotto non cambia il comportamento
+export function cellaSole(wm2, coperturaPct, uv = null) {
   const s = intensitaSolare(wm2);
-  if (!s) return '–';
+  const badge =
+    uv && uv.fascia >= 2
+      ? ` <span class="badge-uv" style="background:${uv.colore}" title="UV ${uv.uv} (${uv.etichetta})">UV ${Math.round(uv.uv)}</span>`
+      : '';
+  if (!s) return badge ? `–${badge}` : '–';
   const velato = s.livello >= 3 && Number.isFinite(coperturaPct) && coperturaPct >= 80;
-  return velato ? `${s.etichetta} <span class="forbice">(velato)</span>` : s.etichetta;
+  return `${velato ? `${s.etichetta} <span class="forbice">(velato)</span>` : s.etichetta}${badge}`;
 }
 
 // Cella nuvolosità: percentuale + piano dominante (basse/medie/alte) +
@@ -109,7 +115,7 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }
     <tr>
       <th>km</th><th>ora</th><th>quota</th><th>T</th><th>perc.</th>
       <th>vento<br>${uVento}</th><th>raffiche<br>${uVento}</th><th>umid.</th>
-      <th>sole</th><th>nuvole<br>base</th><th>visib.</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
+      <th>sole<br>UV</th><th>nuvole<br>base</th><th>visib.</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
     </tr>`;
 
   const righe = campioni
@@ -157,7 +163,7 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }
           <td>${vFmt(v.wind_speed_10m)}${marcatoreEsposizione(c)}</td>
           <td>${vFmt(v.wind_gusts_10m)}${marcatoreEsposizione(c)}</td>
           <td>${num(v.relative_humidity_2m, 0, '%')}</td>
-          <td>${cellaSole(v.shortwave_radiation, v.cloud_cover)}</td>
+          <td>${cellaSole(v.shortwave_radiation, v.cloud_cover, c.uv)}</td>
           <td>${cellaNuvole(c.nuvole)}</td>
           <td>${cellaVisibilita(c.visibilita)}</td>
           <td>${pop}</td>
@@ -224,7 +230,29 @@ function righeDettaglio(c, vFmt, uVento) {
   }
   if (Number.isFinite(v.shortwave_radiation))
     parti.push(`sole ${Math.round(v.shortwave_radiation)} W/m²`);
-  if (Number.isFinite(v.uv_index)) parti.push(`UV ${v.uv_index.toFixed(1)}`);
+  if (c.uv) {
+    // Trasparenza completa: badge OMS + grezzo, fonte e correzioni.
+    // L'UV corretto entra anche nel canale di rischio caldo.
+    const dQuota = Math.round((c.uv.fattoreQuota - 1) * 100);
+    const dettagliUv = [
+      `grezzo ${c.uv.grezzo.toFixed(1)}${c.uv.fonte ? ` (${escapeHtml(c.uv.fonte)})` : ''}`,
+      dQuota !== 0
+        ? `${dQuota > 0 ? '+' : ''}${dQuota}% per ${Math.abs(Math.round(c.uv.deltaM))} m ${c.uv.deltaM >= 0 ? 'sopra' : 'sotto'} la cella`
+        : null,
+      c.uv.fattoreNeve > 1 ? `+${Math.round((c.uv.fattoreNeve - 1) * 100)}% neve prevista` : null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    parti.push(
+      `<span class="badge-uv" style="background:${c.uv.colore}">UV ${c.uv.uv.toFixed(1)}</span> ${c.uv.etichetta} — ${dettagliUv}; usato nel rischio caldo`
+    );
+  } else if (Number.isFinite(v.uv_index)) {
+    // Risultati salvati prima della funzione: resta la vecchia riga
+    parti.push(`UV ${v.uv_index.toFixed(1)}`);
+  }
+  // Indici convettivi (assenti sui risultati salvati prima della funzione)
+  const conv = descriviConvezione(c.convezione);
+  if (conv) parti.push(escapeHtml(conv));
   if (Number.isFinite(v.wind_direction_10m)) {
     let voceVento = `vento da ${Math.round(v.wind_direction_10m)}° (${rombo(v.wind_direction_10m)})`;
     const e = c.esposizione;
@@ -243,10 +271,13 @@ function righeDettaglio(c, vFmt, uVento) {
     parti.push(`zero termico ${Math.round(v.freezing_level_height)} m`);
   if (Number.isFinite(c.precip15Max))
     parti.push(`max 15 min: ${c.precip15Max.toFixed(1)} mm`);
-  if (c.canaliAttivi?.length)
+  if (c.canaliAttivi?.length) {
+    // In grassetto e col colore della classe di rischio del tratto:
+    // deve saltare all'occhio in mezzo al resto del dettaglio
     parti.push(
-      'rischio da: ' + c.canaliAttivi.map((k) => `${k.nome} (${k.score})`).join(', ')
+      `<strong class="dettaglio-rischio" style="color:${COLORI_SEVERITA[c.score ?? 0]}">rischio da: ${c.canaliAttivi.map((k) => `${k.nome} (${k.score})`).join(', ')}</strong>`
     );
+  }
   if (c.windchill) {
     // Tre varianti: governa la colonna / non governa / risultato salvato
     // prima della fusione (campo percepitaGoverna assente)

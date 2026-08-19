@@ -7,18 +7,20 @@
 // di un percorso abbandonato.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE } from './config.js';
+import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE, AVVISO_TEMPORALE, PIANIFICATORE, VARIABILI_PIANIFICATORE } from './config.js';
 import * as storage from './storage.js';
 import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc } from './tempo.js';
 import { campionaTraccia, bboxPunti } from './geo.js';
 import { percorsoDaGpx, percorsoDaKomoot, costruisciPercorso, campioniPerQuota, applicaQuote } from './percorso.js';
 import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza } from './eta.js';
 import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/modelli.js';
-import { meteoModello, meteoConfronto, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
+import { meteoModello, meteoConfronto, meteoSerie, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
 import { quoteDemCached } from './api/dem.js';
 import { puntiSondaEsposizione, profiliDaQuote, fattoreEsposizione } from './esposizione.js';
 import { fascia, classeDispersione } from './dispersione.js';
-import { ensemblePrecipitazione } from './api/ensemble.js';
+import { ensemblePrecipitazione, ensemblePopSerie } from './api/ensemble.js';
+import { candidatiPartenza, valutaFinestre } from './pianificatore.js';
+import { renderPianificatore } from './ui/pianificatore.js';
 import { estraiUserId, estraiTour, elencaTourPianificati, coordinateTour, dettagliTour } from './api/komoot.js';
 import { scaricaGpxOa, estraiIdOa } from './api/outdooractive.js';
 import { percepitaOperativa, FONTE_UTCI, FONTE_STEADMAN, FONTE_WINDCHILL_SU_UTCI, FONTE_WINDCHILL_SU_STEADMAN } from './percepita.js';
@@ -31,6 +33,7 @@ import { areeConRegole } from './api/areeprotette.js';
 import { albaTramontoUtc } from './sole.js';
 import { renderMarcia } from './ui/marcia.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
+import { correggiUv, classificaUv } from './uv.js';
 import { affidabilita, etichettaAffidabilita, affidabilitaGlobale } from './affidabilita.js';
 import { initMappa, disegnaTraccia, evidenziaCampione, pulisciTraccia, escapeHtml } from './ui/mappa.js';
 import { renderProfilo, evidenziaProfilo } from './ui/profilo.js';
@@ -72,6 +75,7 @@ function caricamento(attivo) {
   operazioniAttive = Math.max(0, operazioniAttive + (attivo ? 1 : -1));
   $('caricamento').hidden = operazioniAttive === 0;
   $('bottone-prevedi').disabled = operazioniAttive > 0 || !percorsoCorrente;
+  $('bottone-pianifica').disabled = operazioniAttive > 0 || !percorsoCorrente;
 }
 
 // Contatore delle richieste di ingestione: su caricamenti sovrapposti
@@ -84,6 +88,8 @@ function impostaPercorso(percorso, vocaCronologia = null) {
   percorsoCorrente = percorso;
   epocaCorrente++;
   pulisciRisultato();
+  // La griglia delle finestre vale solo per il percorso che l'ha generata
+  $('pianificatore').hidden = true;
   const box = $('percorso-caricato');
   box.innerHTML = `
     <div class="titolo-percorso">
@@ -98,6 +104,7 @@ function impostaPercorso(percorso, vocaCronologia = null) {
     </div>`;
   box.hidden = false;
   $('bottone-prevedi').disabled = operazioniAttive > 0;
+  $('bottone-pianifica').disabled = operazioniAttive > 0;
   if (vocaCronologia) {
     storage.cronologiaAggiungi(vocaCronologia);
     renderCronologia();
@@ -311,9 +318,10 @@ async function prevedi() {
   }
 }
 
-async function calcolaPrevisione(percorsoIn) {
-  const imp = storage.impostazioni();
-  const avvisi = [];
+// Passi comuni a previsione e pianificatore: ricostruzione quote dal DEM
+// e fuso orario del punto di partenza. Gli avvisi si accumulano nello
+// stesso ordine del flusso storico.
+async function preparaPercorsoETz(percorsoIn, avvisi) {
   let percorso = percorsoIn;
 
   // 1. Quote mancanti: ricostruzione dal DEM (Copernicus 90 m)
@@ -337,6 +345,26 @@ async function calcolaPrevisione(percorsoIn) {
     tz = 'Europe/Rome';
     avvisi.push('Fuso del punto di partenza non determinato: uso Europe/Rome');
   }
+  return { percorso, tz };
+}
+
+// Lettura dei parametri di marcia dal form (comune ai due flussi)
+function parametriMarcia(imp) {
+  const mhSalita = Number($('campo-passo').value) || imp.mhSalita;
+  const pausaMinOra = Math.max(0, Number($('campo-pause').value) || 0);
+  const sostaMin = Math.max(0, Number($('campo-sosta').value) || 0);
+  const sostaDopoOre = Math.max(0, Number($('campo-sosta-dopo').value) || 0);
+  return {
+    mhSalita,
+    pausaMinOra,
+    sosta: sostaMin > 0 ? { dopoOre: sostaDopoOre, durataMin: sostaMin } : null,
+  };
+}
+
+async function calcolaPrevisione(percorsoIn) {
+  const imp = storage.impostazioni();
+  const avvisi = [];
+  const { percorso, tz } = await preparaPercorsoETz(percorsoIn, avvisi);
 
   // 3. Partenza e ETA
   const dataIso = $('campo-data').value;
@@ -346,15 +374,9 @@ async function calcolaPrevisione(percorsoIn) {
   if (partenzaUtc.getTime() < Date.now() - 2 * 3600000) {
     throw new Error('La partenza è nel passato: controlla data e ora');
   }
-  const mhSalita = Number($('campo-passo').value) || imp.mhSalita;
-  const pausaMinOra = Math.max(0, Number($('campo-pause').value) || 0);
-  const sostaMin = Math.max(0, Number($('campo-sosta').value) || 0);
-  const sostaDopoOre = Math.max(0, Number($('campo-sosta-dopo').value) || 0);
-  const eta = calcolaEta(percorso, {
-    mhSalita,
-    pausaMinOra,
-    sosta: sostaMin > 0 ? { dopoOre: sostaDopoOre, durataMin: sostaMin } : null,
-  });
+  const opzioniMarcia = parametriMarcia(imp);
+  const mhSalita = opzioniMarcia.mhSalita;
+  const eta = calcolaEta(percorso, opzioniMarcia);
   avvisi.push(...eta.avvisi);
 
   // 4. Campioni meteo e orari di passaggio
@@ -533,6 +555,7 @@ async function calcolaPrevisione(percorsoIn) {
   let trattiVisibilitaScarsa = 0;
   let trattiSenzaDirezione = 0;
   let trattiCrestaVento = 0;
+  let trattiTemporalePom = 0;
   let forbiceAmpia = false;
   for (let i = 0; i < campioni.length; i++) {
     const c = campioni[i];
@@ -567,13 +590,64 @@ async function calcolaPrevisione(percorsoIn) {
     const usaUtci = oper.indice === 'utci';
     const percepitaC = oper.valore;
     const ensI = ens?.perCampione?.[i] || null;
+    // Lifted index: null su tutti i primari regionali, ponte dal modello
+    // di confronto che lo fornisce (GFS), stesso pattern della visibilità
+    let liPonte = null;
+    let fonteLi = null;
+    if (!Number.isFinite(valori.lifted_index)) {
+      for (const r of conf) {
+        const lc = r.perCampione?.[i]?.valori?.lifted_index;
+        if (Number.isFinite(lc)) {
+          liPonte = lc;
+          fonteLi = r.modello.nome;
+          break;
+        }
+      }
+    }
+    // UV: dal primario se c'è (quasi mai sui regionali), altrimenti ponte
+    // GFS come la visibilità; corretto per quota (delta sentiero−cella) e
+    // neve prevista, poi classificato sulla scala OMS
+    let uvGrezzo = Number.isFinite(valori.uv_index) ? valori.uv_index : null;
+    let fonteUv = null;
+    if (uvGrezzo == null) {
+      for (const r of conf) {
+        const uc = r.perCampione?.[i]?.valori?.uv_index;
+        if (Number.isFinite(uc)) {
+          uvGrezzo = uc;
+          fonteUv = r.modello.nome;
+          break;
+        }
+      }
+    }
+    const nevePrevista =
+      (Number.isFinite(valori.snowfall) && valori.snowfall > 0) ||
+      (Number.isFinite(valori.freezing_level_height) &&
+        Number.isFinite(c.eleM) &&
+        c.eleM > valori.freezing_level_height &&
+        Number.isFinite(valori.precipitation) &&
+        valori.precipitation > 0);
+    const uvCorr = correggiUv(uvGrezzo, {
+      quotaSentieroM: c.eleM,
+      quotaCellaM: quotaCelleArr?.[i] ?? null,
+      nevePrevista,
+    });
+    const uvClasse = uvCorr ? classificaUv(uvCorr.uv) : null;
     // ICON-2I in Appennino non ha probabilità di precipitazione: per il
     // canale pioggia vale la PoP k/N dell'ensemble. Base = valori con
     // vento efficace (il canale raffiche deve sentire l'esposizione)
-    const valoriRischio =
+    let valoriRischio =
       !Number.isFinite(valoriEff.precipitation_probability) && Number.isFinite(ensI?.popKN)
         ? { ...valoriEff, precipitation_probability: ensI.popKN }
         : valoriEff;
+    if (Number.isFinite(liPonte)) {
+      valoriRischio = { ...valoriRischio, lifted_index: liPonte };
+    }
+    // Il canale caldo usa l'UV CORRETTO (stesso precedente del vento
+    // efficace: le grandezze derivate usano il valore efficace, i numeri
+    // stampati restano quelli del modello, trasparenza nel dettaglio)
+    if (uvCorr) {
+      valoriRischio = { ...valoriRischio, uv_index: uvCorr.uv };
+    }
     const canali = p ? scoreCanali(valoriRischio, percepitaC) : {};
     const score = p ? fusione(canali) : 0;
 
@@ -717,6 +791,19 @@ async function calcolaPrevisione(percorsoIn) {
 
     const oraLocale = formattaOra(orari[i], tz);
 
+    // Contatore per l'avviso aggregato temporali: tratti con canale
+    // temporale marcato nella fascia oraria locale critica (12-18)
+    if (p && (canali.temporale ?? 0) >= AVVISO_TEMPORALE.scoreMin) {
+      const oraH = parseInt(oraLocale, 10);
+      if (
+        Number.isFinite(oraH) &&
+        oraH >= AVVISO_TEMPORALE.oreLocali[0] &&
+        oraH <= AVVISO_TEMPORALE.oreLocali[1]
+      ) {
+        trattiTemporalePom++;
+      }
+    }
+
     arricchiti.push({
       lat: c.lat,
       lon: c.lon,
@@ -734,6 +821,32 @@ async function calcolaPrevisione(percorsoIn) {
       canali,
       canaliAttivi: p ? canaliAttivi(canali) : [],
       score,
+      // Indici convettivi per il dettaglio tabella e il CSV (null-safe;
+      // CIN negativo = sentinella MeteoSwiss "non calcolabile" → scartato)
+      convezione: p
+        ? {
+            cape: Number.isFinite(valori.cape) ? valori.cape : null,
+            li: Number.isFinite(valori.lifted_index) ? valori.lifted_index : liPonte,
+            cin:
+              Number.isFinite(valori.convective_inhibition) && valori.convective_inhibition >= 0
+                ? valori.convective_inhibition
+                : null,
+            lpi: Number.isFinite(valori.lightning_potential) ? valori.lightning_potential : null,
+            fonteLi: Number.isFinite(valori.lifted_index) ? null : fonteLi,
+          }
+        : null,
+      // UV corretto e classificato OMS (grezzo e fonte per la trasparenza)
+      uv: uvCorr
+        ? {
+            grezzo: uvGrezzo,
+            fonte: fonteUv,
+            uv: uvCorr.uv,
+            fattoreQuota: uvCorr.fattoreQuota,
+            fattoreNeve: uvCorr.fattoreNeve,
+            deltaM: uvCorr.deltaM,
+            ...uvClasse,
+          }
+        : null,
       ens: ensI,
       aff: { ...aff, etichetta: etichettaAffidabilita(aff.pct) },
       quotaCella,
@@ -799,6 +912,11 @@ async function calcolaPrevisione(percorsoIn) {
   if (trattiCrestaVento) {
     avvisi.push(
       `Su ${trattiCrestaVento} tratti in cresta il vento reale può superare il valore del modello (correzione orografica)`
+    );
+  }
+  if (trattiTemporalePom) {
+    avvisi.push(
+      `Potenziale temporalesco marcato su ${trattiTemporalePom} tratti pomeridiani (${AVVISO_TEMPORALE.oreLocali[0]}-${AVVISO_TEMPORALE.oreLocali[1]}): pianifica di essere fuori da creste e vette nel primo pomeriggio`
     );
   }
   const senzaDati = arricchiti.filter((a) => a.senzaDati).length;
@@ -875,6 +993,128 @@ async function calcolaPrevisione(percorsoIn) {
     unitaVento: imp.unitaVento,
     generatoIl: Date.now(),
   };
+}
+
+// ── Pianificatore finestre di partenza (24-72 h) ────────────────────────
+
+// Contatore dei click: su richieste sovrapposte vince l'ULTIMA
+let richiestaPianifica = 0;
+
+async function pianifica() {
+  if (!percorsoCorrente) return;
+  pulisciMessaggi();
+  const epoca = epocaCorrente; // percorso al momento del click
+  const mia = ++richiestaPianifica;
+  const pannello = $('pianificatore');
+  caricamento(true);
+  try {
+    const imp = storage.impostazioni();
+    const notePrep = [];
+    const { percorso, tz } = await preparaPercorsoETz(percorsoCorrente, notePrep);
+    if (epoca !== epocaCorrente || mia !== richiestaPianifica) return;
+
+    const eta = calcolaEta(percorso, parametriMarcia(imp));
+    const campioni = campionaTraccia(percorso.punti, percorso.cum);
+    const offsetMin = campioni.map((c) =>
+      tempoAllaDistanza(percorso.cum, eta.tCumMin, c.dCumKm)
+    );
+
+    const adessoMs = Date.now();
+    const candidati = candidatiPartenza({ adessoMs, tz });
+    if (!candidati.length) {
+      pannello.hidden = true;
+      mostraMessaggio(
+        'avviso',
+        `Nessuna partenza candidata nelle prossime ${PIANIFICATORE.orizzonteOre} ore (fascia ${PIANIFICATORE.fasciaOreLocali[0]}-${PIANIFICATORE.fasciaOreLocali[1]})`
+      );
+      return;
+    }
+
+    // Modello: il primario a breve termine dell'area (lo stesso della
+    // previsione vicina); le celle oltre il suo orizzonte restano grigie
+    const bbox = bboxPunti(campioni);
+    const leadPrimo = Math.max(
+      1,
+      (candidati[0].partenzaUtcMs + eta.durataTotaleMin * 60000 - adessoMs) / 3600000
+    );
+    const scelta = scegliModelli(bbox, leadPrimo);
+    if (!scelta.primario) throw new Error('Nessun modello disponibile per quest’area');
+    const modello = scelta.primario;
+
+    const ultimoArrivoMs =
+      candidati[candidati.length - 1].partenzaUtcMs + eta.durataTotaleMin * 60000;
+    const limiteApiMs =
+      Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00Z') + 16 * 86400000 - 1;
+    const startHour = oraApiUtc(new Date(candidati[0].partenzaUtcMs - 3600000));
+    const endHour = oraApiUtc(new Date(Math.min(ultimoArrivoMs + 3600000, limiteApiMs)), 'su');
+
+    const note = [...notePrep, ...eta.avvisi];
+    const serveEnsemble = modello.pop === false;
+    const [serieEsito, popEsito, espoEsito] = await Promise.allSettled([
+      meteoSerie({ campioni, modello, variabili: VARIABILI_PIANIFICATORE, startHour, endHour }),
+      serveEnsemble
+        ? ensemblePopSerie({ campioni, startHour, endHour })
+        : Promise.resolve(null),
+      (async () =>
+        profiliDaQuote(campioni, await quoteDemCached(puntiSondaEsposizione(campioni))))(),
+    ]);
+    if (epoca !== epocaCorrente || mia !== richiestaPianifica) return;
+
+    const serieRes = serieEsito.status === 'fulfilled' ? serieEsito.value : null;
+    if (!serieRes || serieRes.copertura < 0.5) {
+      pannello.hidden = true;
+      mostraMessaggio(
+        'errore',
+        `Il pianificatore non ha dati: ${modello.nome} non copre il percorso o la rete non risponde. Riprova più tardi.`
+      );
+      return;
+    }
+    const popSerie =
+      popEsito.status === 'fulfilled' && popEsito.value ? popEsito.value.perCampione : null;
+    if (serveEnsemble && !popSerie) {
+      note.push(
+        'Probabilità di pioggia non disponibile nel pianificatore: canale pioggia sulle sole quantità'
+      );
+    }
+    const profiliEspo = espoEsito.status === 'fulfilled' ? espoEsito.value : null;
+    if (!profiliEspo) {
+      note.push('Correzione orografica del vento non disponibile: vento come da modello');
+    }
+
+    const ultimo = percorso.punti[percorso.punti.length - 1];
+    const finestre = valutaFinestre({
+      candidati,
+      offsetMin,
+      campioni,
+      serieCampioni: serieRes.perCampione,
+      profiliEspo,
+      popSerie,
+      orizzonteMs: adessoMs + modello.orizzonteOre * 3600000,
+      arrivoLatLon: { lat: ultimo.lat, lon: ultimo.lon },
+      durataTotaleMin: eta.durataTotaleMin,
+    });
+
+    renderPianificatore(
+      pannello,
+      { finestre, tz, nomeModello: modello.nome, orizzonteOre: modello.orizzonteOre, note },
+      (f) => {
+        // Click-through: compila il form e lancia la previsione completa
+        $('campo-data').value = f.dataIso;
+        $('campo-ora').value = f.oraLocale;
+        prevedi();
+      }
+    );
+    pannello.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    if (epoca !== epocaCorrente || mia !== richiestaPianifica) return;
+    pannello.hidden = true;
+    mostraMessaggio(
+      'errore',
+      `Il pianificatore richiede la rete: ${e.messaggioUtente || e.message || 'errore imprevisto'}`
+    );
+  } finally {
+    caricamento(false);
+  }
 }
 
 // ── Render ──────────────────────────────────────────────────────────────
@@ -1047,6 +1287,7 @@ function init() {
   });
   $('bottone-ultimo').addEventListener('click', mostraUltimo);
   $('bottone-ultimo').hidden = !storage.ultimoRisultatoLeggi();
+  $('bottone-pianifica').addEventListener('click', pianifica);
 
   initImpostazioni({
     bottoneApri: $('bottone-impostazioni'),
