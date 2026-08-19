@@ -83,6 +83,8 @@ a { color: var(--accento); }
   .griglia-form { grid-template-columns: repeat(2, 1fr); }
 }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--testo-secondario); }
+/* display:flex vincerebbe sull'attributo hidden (campi sosta condizionali) */
+label[hidden] { display: none; }
 input, select {
   background: var(--pannello);
   border: 1px solid var(--bordo);
