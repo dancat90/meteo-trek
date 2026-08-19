@@ -30,7 +30,7 @@ import { baseNuvolosa, tipologiaNubi, classificaVisibilita } from './nuvole.js';
 import { puntiControllo } from './marcia.js';
 import { caricaGriglia, stimaRete } from './copertura.js';
 import { areeConRegole } from './api/areeprotette.js';
-import { albaTramontoUtc } from './sole.js';
+import { albaTramontoPertinenti } from './sole.js';
 import { renderMarcia } from './ui/marcia.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
 import { correggiUv, classificaUv } from './uv.js';
@@ -308,8 +308,15 @@ async function prevedi() {
     const risultato = await calcolaPrevisione(percorsoCorrente);
     if (epoca !== epocaCorrente) return; // percorso cambiato nel frattempo
     render(risultato);
+    // Salvataggio offline verificato col read-back: un fallimento
+    // silenzioso (quota localStorage) lascerebbe il bottone su una
+    // gita vecchia sbagliata
     storage.ultimoRisultatoScrivi(risultato);
-    $('bottone-ultimo').hidden = false;
+    if (storage.ultimoRisultatoLeggi()?.generatoIl === risultato.generatoIl) {
+      $('bottone-ultimo').hidden = false;
+    } else {
+      mostraMessaggio('avviso', 'Risultato non salvato per l’uso offline (spazio locale esaurito)');
+    }
   } catch (e) {
     if (epoca !== epocaCorrente) return;
     mostraMessaggio('errore', e.messaggioUtente || e.message || 'Errore imprevisto');
@@ -353,7 +360,10 @@ function parametriMarcia(imp) {
   const mhSalita = Number($('campo-passo').value) || imp.mhSalita;
   const pausaMinOra = Math.max(0, Number($('campo-pause').value) || 0);
   const sostaMin = Math.max(0, Number($('campo-sosta').value) || 0);
-  const sostaDopoOre = Math.max(0, Number($('campo-sosta-dopo').value) || 0);
+  // Campo «dopo» svuotato: default del form (3 h), MAI 0 — una sosta a
+  // 0 ore si collocherebbe alla partenza e slitterebbe tutti gli orari
+  const dopoGrezzo = Number($('campo-sosta-dopo').value);
+  const sostaDopoOre = Number.isFinite(dopoGrezzo) && dopoGrezzo >= 0.5 ? dopoGrezzo : 3;
   return {
     mhSalita,
     pausaMinOra,
@@ -420,7 +430,7 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito, espoEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito, espoEsito, celleUvEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
@@ -448,6 +458,12 @@ async function calcolaPrevisione(percorsoIn) {
     // dall'allSettled: il fallimento degrada a fattore 1 con avviso
     (async () =>
       profiliDaQuote(campioni, await quoteDemCached(puntiSondaEsposizione(campioni))))(),
+    // Quota vera delle celle del modello che fornisce l'UV via ponte
+    // (GFS ~13 km): la correzione di quota dell'UV deve usare QUELLA
+    // cella, non quella del primario a ~2 km (delta molto diverso)
+    scelta.confronto?.some((m) => m.id === 'gfs_seamless')
+      ? quoteCelle(campioni, MODELLI.gfs_seamless)
+      : Promise.resolve(null),
   ]);
 
   // 7. Degradazioni esplicite, mai silenziose
@@ -521,11 +537,18 @@ async function calcolaPrevisione(percorsoIn) {
     );
   }
 
-  // Quote celle: valide solo se il modello usato è rimasto il primario
-  const quotaCelleArr =
+  // Quote celle: valide solo se il modello usato è rimasto il primario;
+  // dopo un ripiego si richiedono per il modello effettivamente usato
+  // (senza, correzione UV e avviso quota-cella sparirebbero in silenzio)
+  let quotaCelleArr =
     modelloUsato.id === scelta.primario.id && celleEsito.status === 'fulfilled'
       ? celleEsito.value
       : null;
+  if (!quotaCelleArr && modelloUsato.id !== scelta.primario.id) {
+    quotaCelleArr = await quoteCelle(campioni, modelloUsato);
+  }
+  // Quote celle del modello ponte dell'UV (null se GFS non è in gioco)
+  const quotaCelleUvArr = celleUvEsito.status === 'fulfilled' ? celleUvEsito.value : null;
 
   // Il dettaglio a 15 minuti arriva SOLO dalla chiamata ICON-D2,
   // qualunque ruolo abbia (primario o secondario)
@@ -626,9 +649,13 @@ async function calcolaPrevisione(percorsoIn) {
         c.eleM > valori.freezing_level_height &&
         Number.isFinite(valori.precipitation) &&
         valori.precipitation > 0);
+    // Il delta di quota va calcolato contro la cella del modello che ha
+    // PRODOTTO l'UV: quella del ponte (GFS) quando fonteUv è valorizzata,
+    // quella del primario solo se l'UV viene dal primario. Senza quota
+    // della cella giusta la correzione si rinuncia (mai inventata).
     const uvCorr = correggiUv(uvGrezzo, {
       quotaSentieroM: c.eleM,
-      quotaCellaM: quotaCelleArr?.[i] ?? null,
+      quotaCellaM: (fonteUv ? quotaCelleUvArr?.[i] : quotaCelleArr?.[i]) ?? null,
       nevePrevista,
     });
     const uvClasse = uvCorr ? classificaUv(uvCorr.uv) : null;
@@ -945,7 +972,7 @@ async function calcolaPrevisione(percorsoIn) {
   // 10. Tabella di marcia: punti di controllo ogni 15 minuti di tabella
   //     + regola del tramonto (finire almeno 1 ora prima)
   const ultimoPunto = percorso.punti[percorso.punti.length - 1];
-  const sole = albaTramontoUtc(arrivo, ultimoPunto.lat, ultimoPunto.lon);
+  const sole = albaTramontoPertinenti(arrivo, ultimoPunto.lat, ultimoPunto.lon);
   const tramonto = sole?.tramontoUtc ?? null;
   const margineTramontoMin = tramonto
     ? Math.round((tramonto.getTime() - arrivo.getTime()) / 60000)
@@ -1027,7 +1054,10 @@ let richiestaPianifica = 0;
 async function pianifica() {
   if (!percorsoCorrente) return;
   pulisciMessaggi();
-  const epoca = epocaCorrente; // percorso al momento del click
+  // Guardia sull'IDENTITÀ del percorso, non su epocaCorrente: prevedi()
+  // incrementa l'epoca a ogni lancio e abortirebbe in silenzio una
+  // pianificazione in volo su un Prevedi concorrente
+  const mioPercorso = percorsoCorrente;
   const mia = ++richiestaPianifica;
   const pannello = $('pianificatore');
   caricamento(true);
@@ -1035,7 +1065,7 @@ async function pianifica() {
     const imp = storage.impostazioni();
     const notePrep = [];
     const { percorso, tz } = await preparaPercorsoETz(percorsoCorrente, notePrep);
-    if (epoca !== epocaCorrente || mia !== richiestaPianifica) return;
+    if (mioPercorso !== percorsoCorrente || mia !== richiestaPianifica) return;
 
     const eta = calcolaEta(percorso, parametriMarcia(imp));
     const campioni = campionaTraccia(percorso.punti, percorso.cum);
@@ -1064,6 +1094,8 @@ async function pianifica() {
     const scelta = scegliModelli(bbox, leadPrimo);
     if (!scelta.primario) throw new Error('Nessun modello disponibile per quest’area');
     const modello = scelta.primario;
+    // Un eventuale downgrade del modello va dichiarato anche qui
+    const noteScelta = scelta.avvisi || [];
 
     const ultimoArrivoMs =
       candidati[candidati.length - 1].partenzaUtcMs + eta.durataTotaleMin * 60000;
@@ -1072,7 +1104,7 @@ async function pianifica() {
     const startHour = oraApiUtc(new Date(candidati[0].partenzaUtcMs - 3600000));
     const endHour = oraApiUtc(new Date(Math.min(ultimoArrivoMs + 3600000, limiteApiMs)), 'su');
 
-    const note = [...notePrep, ...eta.avvisi];
+    const note = [...notePrep, ...eta.avvisi, ...noteScelta];
     const serveEnsemble = modello.pop === false;
     const [serieEsito, popEsito, espoEsito] = await Promise.allSettled([
       meteoSerie({ campioni, modello, variabili: VARIABILI_PIANIFICATORE, startHour, endHour }),
@@ -1082,7 +1114,7 @@ async function pianifica() {
       (async () =>
         profiliDaQuote(campioni, await quoteDemCached(puntiSondaEsposizione(campioni))))(),
     ]);
-    if (epoca !== epocaCorrente || mia !== richiestaPianifica) return;
+    if (mioPercorso !== percorsoCorrente || mia !== richiestaPianifica) return;
 
     const serieRes = serieEsito.status === 'fulfilled' ? serieEsito.value : null;
     if (!serieRes || serieRes.copertura < 0.5) {
@@ -1130,7 +1162,7 @@ async function pianifica() {
     );
     pannello.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
-    if (epoca !== epocaCorrente || mia !== richiestaPianifica) return;
+    if (mioPercorso !== percorsoCorrente || mia !== richiestaPianifica) return;
     pannello.hidden = true;
     mostraMessaggio(
       'errore',
@@ -1212,7 +1244,8 @@ function bloccoAreeProtette(r) {
             a.cani.nota ? ` — ${escapeHtml(a.cani.nota)}` : ''
           }${a.cani.verificato ? ` <span class="forbice">(verificata il ${escapeHtml(a.cani.verificato)})</span>` : ''}`
         : 'regole sui cani non censite: verifica sul sito dell’ente';
-      const sito = a.sito
+      // Solo http/https: il tag OSM è dato remoto e finirebbe in un href
+      const sito = a.sito && /^https?:\/\//i.test(a.sito)
         ? ` · <a href="${escapeHtml(a.sito)}" target="_blank" rel="noopener">sito dell’ente</a>`
         : '';
       return `<div class="area-protetta"><strong>${escapeHtml(a.nome)}</strong> <span class="forbice">(${escapeHtml(a.tipo)})</span><br>${regola}${sito}</div>`;
@@ -1251,6 +1284,9 @@ function mostraUltimo() {
   const r = storage.ultimoRisultatoLeggi();
   if (!r) return;
   pulisciMessaggi();
+  // La heatmap del pianificatore riguarda il percorso corrente, non il
+  // risultato salvato che sta per comparire sotto
+  $('pianificatore').hidden = true;
   mostraMessaggio(
     'info',
     `Previsione salvata ${formattaDataOra(new Date(r.generatoIl), r.tz)} — offline la mappa resta senza sfondo`

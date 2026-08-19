@@ -92,7 +92,9 @@ export function renderPianificatore(container, dati, onScegli) {
         Cella = rischio massimo lungo il percorso per quella partenza (0 buono → 3 severo) ·
         ☾ arrivo dopo il tramonto · ! margine sotto 1 h · ~ dati parziali · · oltre orizzonte o senza dati.
         Il pianificatore valuta solo il rischio a 5 canali sul modello primario: dettaglio 15 min,
-        confronto fra modelli, UV e affidabilità restano nella previsione completa, che è il riferimento.
+        confronto fra modelli, UV, instabilità (lifted index) e affidabilità restano nella previsione
+        completa, che è il riferimento — lo score di una cella può differire fino a 2 classi nei casi
+        estremi (UV o instabilità marcati che qui non sono valutati).
       </div>
       <div class="dettaglio-pianificatore" hidden></div>
     </div>`;

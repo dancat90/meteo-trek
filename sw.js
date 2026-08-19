@@ -5,7 +5,7 @@
 // tile della mappa NON passano MAI dalla cache: devono essere fresche.
 // ─────────────────────────────────────────────────────────────────────────
 
-const CACHE = 'meteo-trek-v18';
+const CACHE = 'meteo-trek-v19';
 
 const CDN_LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
 

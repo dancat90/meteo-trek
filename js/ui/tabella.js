@@ -145,8 +145,11 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null, 
         Number.isFinite(c.eleM) &&
         c.eleM > v.freezing_level_height;
       let mm = num(v.precipitation, 1);
-      if ((Number.isFinite(v.snowfall) && v.snowfall > 0) || (quotaSopraZero && v.precipitation > 0)) {
+      if (Number.isFinite(v.snowfall) && v.snowfall > 0) {
         mm += ` <span class="neve">❄ ${num(v.snowfall, 1)} cm</span>`;
+      } else if (quotaSopraZero && v.precipitation > 0) {
+        // Quantità di neve assente o zero: solo il simbolo, mai «– cm»
+        mm += ` <span class="neve" title="quota sopra lo zero termico: probabile neve">❄</span>`;
       }
       if (c.ens && (c.ens.mmMax > 0 || Number.isFinite(v.precipitation))) {
         if (c.ens.mmMax > 0) {

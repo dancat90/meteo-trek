@@ -41,3 +41,18 @@ export function albaTramontoUtc(data, lat, lon) {
 export function tramontoUtc(data, lat, lon) {
   return albaTramontoUtc(data, lat, lon)?.tramontoUtc ?? null;
 }
+
+// Alba/tramonto PERTINENTI a un orario di arrivo: albaTramontoUtc aggancia
+// il giorno solare più VICINO, quindi per un arrivo dopo la mezzanotte
+// solare (~01:10 CEST in Italia) restituirebbe il tramonto della sera
+// SUCCESSIVA e l'arrivo notturno sembrerebbe avere 17 h di margine.
+// Se l'arrivo precede l'alba del giorno agganciato, si riclassifica sul
+// giorno solare precedente (la notte in corso è quella iniziata ieri).
+export function albaTramontoPertinenti(arrivo, lat, lon) {
+  const sole = albaTramontoUtc(arrivo, lat, lon);
+  if (!sole) return null;
+  if (arrivo.getTime() < sole.albaUtc.getTime()) {
+    return albaTramontoUtc(new Date(arrivo.getTime() - 86400000), lat, lon) ?? sole;
+  }
+  return sole;
+}

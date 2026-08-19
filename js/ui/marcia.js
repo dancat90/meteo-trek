@@ -469,7 +469,11 @@ async function immagineMappaPdf(r, punti) {
 // il documento arriva dopo, a immagine pronta.
 function esportaPdf(r, righe, puntiMappa) {
   const w = window.open('', '_blank');
-  if (!w) return;
+  if (!w) {
+    // Popup bloccato dal browser: mai fallire in silenzio
+    alert('Il browser ha bloccato la finestra del PDF: consenti i popup per questo sito e riprova.');
+    return;
+  }
   w.document.write('<p style="font-family:sans-serif">Preparo la tabella di marcia…</p>');
 
   immagineMappaPdf(r, puntiMappa).then(({ dataUrl, sfondo }) => {

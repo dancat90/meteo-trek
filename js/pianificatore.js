@@ -16,7 +16,7 @@ import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
 import { percepitaOperativa } from './percepita.js';
 import { giornoAnnoUtc } from './radiante.js';
 import { fattoreEsposizione } from './esposizione.js';
-import { albaTramontoUtc } from './sole.js';
+import { albaTramontoPertinenti } from './sole.js';
 
 // "YYYY-MM-DD" del giorno locale nel fuso tz all'istante ms
 function dataIsoLocale(ms, tz) {
@@ -125,7 +125,7 @@ export function valutaFinestre({
     // Tramonto sulla posizione di arrivo (stessa regola del riepilogo)
     let tramonto = null;
     if (arrivoLatLon) {
-      const sole = albaTramontoUtc(new Date(arrivoUtcMs), arrivoLatLon.lat, arrivoLatLon.lon);
+      const sole = albaTramontoPertinenti(new Date(arrivoUtcMs), arrivoLatLon.lat, arrivoLatLon.lon);
       if (sole?.tramontoUtc) {
         const margine = Math.round((sole.tramontoUtc.getTime() - arrivoUtcMs) / 60000);
         tramonto = {
@@ -145,6 +145,7 @@ export function valutaFinestre({
     const distribuzione = [0, 0, 0, 0];
     let peggior = null;
     let campioniSenzaDati = 0;
+    let campioniConBuco = 0;
     for (let i = 0; i < campioni.length; i++) {
       const istante = partenzaUtcMs + (offsetMin[i] ?? 0) * 60000;
       const estratto = valoriAllOra(serieCampioni?.[i], istante);
@@ -152,6 +153,9 @@ export function valutaFinestre({
         campioniSenzaDati++;
         continue;
       }
+      // Valore preso in prestito dall'ora adiacente: la cella va marcata
+      // come dati parziali (mai degradazione silenziosa)
+      if (estratto.buco) campioniConBuco++;
       const v = estratto.valori;
       // Correzione orografica risolta sulla direzione ORARIA del vento
       const espo = profiliEspo
@@ -191,7 +195,7 @@ export function valutaFinestre({
     const stato =
       campioniSenzaDati >= n || campioniSenzaDati > n / 2
         ? 'senzaDati'
-        : campioniSenzaDati > 0
+        : campioniSenzaDati > 0 || campioniConBuco > 0
           ? 'datiParziali'
           : 'ok';
     return {

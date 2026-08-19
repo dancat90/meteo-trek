@@ -73,9 +73,13 @@ export function parseGpx(testo) {
   if (typeof testo !== 'string' || !testo.includes('<')) {
     throw new Error('Il file non sembra un GPX');
   }
-  // Traccia registrata/pianificata; in mancanza, la rotta (rtept)
+  // Traccia registrata/pianificata; in mancanza (o con una traccia
+  // degenere sotto i 2 punti), la rotta (rtept) se è più completa
   let punti = estraiPunti(testo, 'trkpt');
-  if (!punti.length) punti = estraiPunti(testo, 'rtept');
+  if (punti.length < 2) {
+    const rotta = estraiPunti(testo, 'rtept');
+    if (rotta.length >= 2) punti = rotta;
+  }
   if (punti.length < 2) {
     throw new Error('Nessuna traccia trovata nel GPX (né trkpt né rtept)');
   }

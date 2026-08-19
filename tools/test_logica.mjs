@@ -61,7 +61,7 @@ import { estraiTour, estraiTourId } from '../js/api/komoot.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { albaTramontoUtc } from '../js/sole.js';
+import { albaTramontoUtc, albaTramontoPertinenti } from '../js/sole.js';
 import { puntoDaTraccia, mercatorPx, scegliZoom, raggruppaPunti } from '../js/ui/marcia.js';
 import { windchillC, classeCongelamento } from '../js/windchill.js';
 import { mrtDiNapoli, cosszaDaToa, giornoAnnoUtc } from '../js/radiante.js';
@@ -1019,6 +1019,43 @@ console.log('── Export CSV ──');
     nomeFileCsv(fixture)
   );
   test('avvisi vuoti → riga dedicata', csvAvvisi({ avvisi: [] }).includes('nessun avviso'));
+}
+
+console.log('── Fix review: tramonto notturno, CSV injection, GPX ──');
+{
+  // Arrivo alle 01:00Z a Roma: albaTramontoUtc aggancerebbe il tramonto
+  // della sera SUCCESSIVA (margine +17 h); il pertinente guarda la notte
+  // in corso e dà margine negativo
+  const arrivoNotte = new Date('2026-08-20T01:00:00Z');
+  const ingenuo = albaTramontoUtc(arrivoNotte, 41.9, 12.5);
+  const pertinente = albaTramontoPertinenti(arrivoNotte, 41.9, 12.5);
+  test('arrivo notturno: il tramonto ingenuo è nel futuro', ingenuo.tramontoUtc.getTime() > arrivoNotte.getTime());
+  test('arrivo notturno: il tramonto pertinente è già passato', pertinente.tramontoUtc.getTime() < arrivoNotte.getTime(), pertinente.tramontoUtc.toISOString());
+  // Arrivo diurno: nessun cambiamento
+  const arrivoGiorno = new Date('2026-08-20T15:00:00Z');
+  test(
+    'arrivo diurno: pertinente = ingenuo',
+    albaTramontoPertinenti(arrivoGiorno, 41.9, 12.5).tramontoUtc.getTime() ===
+      albaTramontoUtc(arrivoGiorno, 41.9, 12.5).tramontoUtc.getTime()
+  );
+
+  // CSV injection: formule neutralizzate, numeri negativi intatti
+  test('campoCsv neutralizza =formula', campoCsv('=1+2').startsWith("'"));
+  test('campoCsv neutralizza @cmd', campoCsv('@cmd').startsWith("'"));
+  test('campoCsv neutralizza -testo', campoCsv('-testo').startsWith("'"));
+  test('campoCsv lascia i numeri negativi', campoCsv('-5,0') === '-5,0');
+  test('numeroIt negativo resta esente', campoCsv(numeroIt(-5.04, 1)) === '-5,0');
+
+  // Nome file con data LOCALE: partenza 23:30 locale del 21/08 = 21:30Z
+  const rNotte = { nome: 'x', partenzaIso: '2026-08-21T21:30:00Z', tz: 'Europe/Rome' };
+  test('nome file col giorno locale', nomeFileCsv(rNotte).includes('2026-08-21'), nomeFileCsv(rNotte));
+  const rDopoMezzanotte = { nome: 'x', partenzaIso: '2026-08-21T22:30:00Z', tz: 'Europe/Rome' };
+  test('partenza 00:30 locale → giorno dopo', nomeFileCsv(rDopoMezzanotte).includes('2026-08-22'));
+
+  // GPX: traccia degenere a 1 punto + rotta completa → vince la rotta
+  const gpxMisto = `<?xml version="1.0"?><gpx><trk><trkseg><trkpt lat="46" lon="11"></trkpt></trkseg></trk>
+    <rte><rtept lat="46" lon="11"></rtept><rtept lat="46.01" lon="11"></rtept></rte></gpx>`;
+  test('GPX con 1 trkpt spurio → fallback rtept', parseGpx(gpxMisto).punti.length === 2);
 }
 
 console.log('── Distanza al tempo (posizione sosta) ──');
