@@ -414,3 +414,14 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   text-align: center;
   text-decoration: none;
 }
+
+/* ── Riga della sosta pranzo nelle tabelle ──
+   Azzurro accento: identificabile e fuori dalla scala colori del rischio */
+table.tratti tr.riga-sosta td {
+  background: rgba(88, 166, 255, 0.12);
+  border-left: 3px solid var(--accento);
+  color: var(--accento);
+  font-weight: 700;
+  text-align: left;
+  white-space: normal;
+}

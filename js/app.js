@@ -12,7 +12,7 @@ import * as storage from './storage.js';
 import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc } from './tempo.js';
 import { campionaTraccia, bboxPunti } from './geo.js';
 import { percorsoDaGpx, percorsoDaKomoot, costruisciPercorso, campioniPerQuota, applicaQuote } from './percorso.js';
-import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza } from './eta.js';
+import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza, distanzaAlTempo } from './eta.js';
 import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/modelli.js';
 import { meteoModello, meteoConfronto, meteoSerie, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
 import { quoteDemCached } from './api/dem.js';
@@ -957,6 +957,29 @@ async function calcolaPrevisione(percorsoIn) {
         : `Arrivo previsto a soli ${margineTramontoMin} min dal tramonto delle ${formattaOra(tramonto, tz)}: la regola è finire almeno 1 ora prima`
     );
   }
+  // Sosta pranzo: posizione lungo il percorso e orari, per l'evidenza
+  // nelle due tabelle. Esiste solo se cade davvero dentro la gita.
+  let sosta = null;
+  if (opzioniMarcia.sosta) {
+    const dopoMin = (opzioniMarcia.sosta.dopoOre ?? 0) * 60;
+    const durataMin = opzioniMarcia.sosta.durataMin;
+    if (eta.durataTotaleMin > dopoMin + durataMin) {
+      const inizio = new Date(partenzaUtc.getTime() + dopoMin * 60000);
+      const fine = new Date(inizio.getTime() + durataMin * 60000);
+      sosta = {
+        // +1 min: dentro il salto della sosta, così la bisezione converge
+        // sul punto in cui ci si ferma
+        dKm: distanzaAlTempo(percorso.cum, eta.tCumMin, dopoMin + 1),
+        dopoMin,
+        durataMin,
+        inizioIso: inizio.toISOString(),
+        fineIso: fine.toISOString(),
+        oraInizio: formattaOra(inizio, tz),
+        oraFine: formattaOra(fine, tz),
+      };
+    }
+  }
+
   const marcia = puntiControllo(percorso, eta, 15).map((c) => {
     const quando = new Date(partenzaUtc.getTime() + c.tMin * 60000);
     let idx = 0;
@@ -989,6 +1012,7 @@ async function calcolaPrevisione(percorsoIn) {
     marcia,
     tramontoIso: tramonto ? tramonto.toISOString() : null,
     margineTramontoMin,
+    sosta,
     areeProtette: areeProt,
     unitaVento: imp.unitaVento,
     generatoIl: Date.now(),
@@ -1165,7 +1189,7 @@ function render(r) {
     },
     selezionaCampione
   );
-  renderTabella($('tabella'), { campioni: r.campioni, unitaVento: r.unitaVento, affGlobalePct: r.affGlobalePct }, selezionaCampione);
+  renderTabella($('tabella'), { campioni: r.campioni, unitaVento: r.unitaVento, affGlobalePct: r.affGlobalePct, sosta: r.sosta }, selezionaCampione);
   renderMarcia($('marcia'), r);
 }
 

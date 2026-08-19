@@ -152,6 +152,13 @@ export function renderMarcia(el, r) {
   }
   const righe = righeDati(r);
   const puntiMappa = r.marcia.map((p) => puntoDaTraccia(r.traccia, p.dKm));
+  // Riga della sosta pranzo: prima del primo punto di controllo che cade
+  // dopo l'inizio della fermata (assente sui risultati salvati vecchi)
+  const idxSosta = r.sosta ? r.marcia.findIndex((p) => p.tMin > r.sosta.dopoMin) : -1;
+  const testoSosta = r.sosta
+    ? `🍽 Sosta pranzo — ${r.sosta.durataMin} min al km ${r.sosta.dKm.toFixed(1)} (${escapeHtml(r.sosta.oraInizio)}–${escapeHtml(r.sosta.oraFine)})`
+    : '';
+  const rigaSosta = r.sosta ? `<tr class="riga-sosta"><td colspan="13">${testoSosta}</td></tr>` : '';
   const allarme =
     r.margineTramontoMin != null && r.margineTramontoMin < 60
       ? `<div class="avvisi"><div>⚠ Il trek deve finire entro un'ora dal tramonto: ${
@@ -181,13 +188,13 @@ export function renderMarcia(el, r) {
         </tr></thead>
         <tbody>${righe
           .map(
-            (x, i) => `<tr class="riga-marcia" data-idx="${i}">
+            (x, i) => `${i === idxSosta ? rigaSosta : ''}<tr class="riga-marcia" data-idx="${i}">
           <td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
           <td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td>
           <td>${x.raff}</td><td>${cellaNuvole(x.nuvole)}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteDot(x.rete)}</td>
         </tr>`
           )
-          .join('')}</tbody>
+          .join('')}${r.sosta && idxSosta === -1 ? rigaSosta : ''}</tbody>
       </table></div>
     </div>`;
   el.hidden = false;
@@ -512,7 +519,11 @@ ${blocco}
 </tr></thead><tbody>
 ${righe
   .map(
-    (x) => `<tr><td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
+    (x, i) => `${
+      r.sosta && i === r.marcia.findIndex((p) => p.tMin > r.sosta.dopoMin)
+        ? `<tr><td colspan="13" style="font-weight:bold;background:#ddd;text-align:left">🍽 Sosta pranzo — ${r.sosta.durataMin} min al km ${r.sosta.dKm.toFixed(1)} (${escapeHtml(r.sosta.oraInizio)}–${escapeHtml(r.sosta.oraFine)})</td></tr>`
+        : ''
+    }<tr><td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
 <td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td><td>${x.raff}</td><td>${x.nuvolePdf}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteTesto(x.rete)}</td></tr>`
   )
   .join('')}

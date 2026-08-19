@@ -104,7 +104,7 @@ const rombo = (g) => ROMBI[Math.round((((g % 360) + 360) % 360) / 45) % 8];
 
 // campioni: voci arricchite (vedi app.js assemblaCampioni)
 // unitaVento: 'kmh' | 'ms'
-export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }, onSelezione = null) {
+export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null, sosta = null }, onSelezione = null) {
   selezioneCb = onSelezione;
   const inMs = unitaVento === 'ms';
   const vFmt = (kmh) =>
@@ -117,6 +117,13 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }
       <th>vento<br>${uVento}</th><th>raffiche<br>${uVento}</th><th>umid.</th>
       <th>sole<br>UV</th><th>nuvole<br>base</th><th>visib.</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
     </tr>`;
+
+  // Riga della sosta pranzo: inserita fra i due campioni a cavallo del
+  // punto di fermata (colore dedicato, distinto dalla scala del rischio)
+  const rigaSosta = sosta
+    ? `<tr class="riga-sosta"><td colspan="15">🍽 Sosta pranzo — ${sosta.durataMin} min al km ${sosta.dKm.toFixed(1)} (${escapeHtml(sosta.oraInizio)}–${escapeHtml(sosta.oraFine)})</td></tr>`
+    : '';
+  const idxSosta = sosta ? campioni.findIndex((c) => c.dCumKm > sosta.dKm) : -1;
 
   const righe = campioni
     .map((c, i) => {
@@ -153,7 +160,7 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }
         : `<span class="cella-rischio"><span class="chip" style="background:${COLORI_SEVERITA[score]}"></span>${ETICHETTE_RISCHIO[score]}</span>`;
 
       const dettagli = righeDettaglio(c, vFmt, uVento);
-      return `
+      return `${i === idxSosta ? rigaSosta : ''}
         <tr class="riga-dati" data-idx="${i}">
           <td>${c.dCumKm.toFixed(1)}</td>
           <td>${escapeHtml(c.oraLocale)}</td>
@@ -185,8 +192,11 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null }
       </div>`
     : '';
 
+  // Sosta oltre l'ultimo campione: riga in coda (caso limite)
+  const righeConCoda = sosta && idxSosta === -1 ? righe + rigaSosta : righe;
+
   el.innerHTML = `${badgeAff}<div class="contenitore-tabella"><table class="tratti">
-    <thead>${testata}</thead><tbody>${righe}</tbody></table></div>`;
+    <thead>${testata}</thead><tbody>${righeConCoda}</tbody></table></div>`;
   el.hidden = false;
 
   righeDati = [...el.querySelectorAll('tr.riga-dati')];

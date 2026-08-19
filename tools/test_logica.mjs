@@ -30,6 +30,7 @@ import {
   tempoSvizzeroMin,
   calcolaEta,
   tempoAllaDistanza,
+  distanzaAlTempo,
 } from '../js/eta.js';
 import { scegliModelli, dentroBox, quindiciMinDisponibile, motivoNiente15Min, modelliConfronto } from '../js/api/modelli.js';
 import { MODELLI } from '../js/config.js';
@@ -1018,6 +1019,22 @@ console.log('── Export CSV ──');
     nomeFileCsv(fixture)
   );
   test('avvisi vuoti → riga dedicata', csvAvvisi({ avvisi: [] }).includes('nessun avviso'));
+}
+
+console.log('── Distanza al tempo (posizione sosta) ──');
+{
+  // Profilo lineare: 10 km in 200 min → a 100 min si è a 5 km
+  const cum = [0, 2.5, 5, 7.5, 10];
+  const lineare = [0, 50, 100, 150, 200];
+  test('profilo lineare: metà tempo = metà strada', vicino(distanzaAlTempo(cum, lineare, 100), 5, 0.01));
+  // Con sosta di 60 min al km 5 (salto quasi verticale fra trackpoint
+  // ravvicinati, come sulle tracce reali): un istante dentro il salto
+  // risolve al km della fermata
+  const cumFitti = [0, 2.5, 5, 5.01, 7.5, 10];
+  const conSosta = [0, 50, 100, 160.2, 210, 260];
+  test('istante dentro la sosta → km della fermata', vicino(distanzaAlTempo(cumFitti, conSosta, 130), 5, 0.05), String(distanzaAlTempo(cumFitti, conSosta, 130)));
+  test('oltre il totale → fine percorso', vicino(distanzaAlTempo(cum, lineare, 999), 10, 0.01));
+  test('tempo zero → partenza', vicino(distanzaAlTempo(cum, lineare, 0), 0, 0.01));
 }
 
 console.log('── Pianificatore: candidati ──');

@@ -150,3 +150,17 @@ export function tempoAllaDistanza(cum, tCumMin, x) {
 export function orarioAllaDistanza(partenzaUtc, cum, tCumMin, x) {
   return new Date(partenzaUtc.getTime() + tempoAllaDistanza(cum, tCumMin, x) * 60000);
 }
+
+// Distanza (km) alla quale il tempo cumulato raggiunge tMin: inversa di
+// tempoAllaDistanza per bisezione. Serve a collocare lungo il percorso
+// eventi definiti nel tempo (es. la sosta pranzo).
+export function distanzaAlTempo(cum, tCumMin, tMin) {
+  let lo = 0;
+  let hi = cum[cum.length - 1];
+  for (let it = 0; it < 24; it++) {
+    const mid = (lo + hi) / 2;
+    if (tempoAllaDistanza(cum, tCumMin, mid) < tMin) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
