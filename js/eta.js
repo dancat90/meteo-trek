@@ -117,10 +117,43 @@ export function calcolaEta(percorso, opzioni = {}) {
   const durataMovimentoMin = tNom * fPasso;
 
   // 5. Sosta puntuale (es. pranzo): slittamento additivo di tutti i punti
-  //    successivi al momento della sosta
+  //    successivi al momento della sosta. Tre chiavi del chiamante, in
+  //    ordine di precedenza: aDistanzaKm (km della fermata, es. vetta) >
+  //    dopoMin (minuti dalla partenza, es. orario fisso già risolto) >
+  //    dopoOre (modalità storica, retrocompatibile). Le guardie vivono
+  //    qui, uniche per tutte le modalità, con avviso dichiarato.
+  let sostaEff = null;
   if (sosta && sosta.durataMin > 0) {
-    const dopoMin = (sosta.dopoOre ?? 0) * 60;
-    tCumMin = tCumMin.map((t) => (t > dopoMin ? t + sosta.durataMin : t));
+    const durataBase = tCumMin[tCumMin.length - 1];
+    let dopoMin;
+    if (Number.isFinite(sosta.aDistanzaKm)) {
+      dopoMin = tempoAllaDistanza(cum, tCumMin, sosta.aDistanzaKm);
+    } else if (Number.isFinite(sosta.dopoMin)) {
+      dopoMin = sosta.dopoMin;
+    } else {
+      dopoMin = (sosta.dopoOre ?? 0) * 60;
+    }
+    if (!Number.isFinite(dopoMin) || dopoMin <= 0) {
+      avvisi.push(
+        Number.isFinite(sosta.aDistanzaKm)
+          ? 'Il punto più alto coincide con la partenza: sosta «in vetta» ignorata'
+          : 'Sosta pranzo alla partenza o prima: ignorata'
+      );
+    } else if (dopoMin >= durataBase) {
+      if (Number.isFinite(sosta.aDistanzaKm)) {
+        // Vetta all'arrivo: la riga informativa resta, gli orari no
+        avvisi.push('Il punto più alto coincide con l’arrivo: la sosta non sposta gli orari');
+        sostaEff = { dopoMin: durataBase, durataMin: sosta.durataMin, dKm: sosta.aDistanzaKm };
+      } else {
+        avvisi.push('Sosta pranzo oltre l’arrivo previsto: ignorata');
+      }
+    } else {
+      tCumMin = applicaSosta(tCumMin, dopoMin, sosta.durataMin);
+      const dKm = Number.isFinite(sosta.aDistanzaKm)
+        ? sosta.aDistanzaKm
+        : distanzaAlTempo(cum, tCumMin, dopoMin + 1);
+      sostaEff = { dopoMin, durataMin: sosta.durataMin, dKm };
+    }
   }
 
   return {
@@ -130,8 +163,17 @@ export function calcolaEta(percorso, opzioni = {}) {
     k,
     tNomogrammaMin: tNom,
     tSvizzeroMin: tSviz,
+    // Sosta normalizzata (o null se assente/ignorata): unica fonte di
+    // verità per la riga in tabella e per il campo del risultato
+    sosta: sostaEff,
     avvisi,
   };
+}
+
+// Regola di slittamento della sosta, riusata dal pianificatore sugli
+// offset dei campioni: slittano solo i tempi OLTRE il momento della sosta
+export function applicaSosta(tMinArr, dopoMin, durataMin) {
+  return tMinArr.map((t) => (t > dopoMin ? t + durataMin : t));
 }
 
 // Tempo cumulato (minuti) alla distanza progressiva x, interpolato

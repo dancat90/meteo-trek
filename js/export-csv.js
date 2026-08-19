@@ -119,6 +119,13 @@ export function csvCompleto(r) {
         : formattaDataOra(new Date(r.arrivoIso), r.tz),
     ]) +
     rigaCsv(['modello', r.modello?.nome ?? '']) +
+    // Sosta pranzo (null-safe sui risultati salvati senza il campo)
+    (r.sosta
+      ? rigaCsv([
+          'sosta pranzo',
+          `${r.sosta.durataMin} min al km ${numeroIt(r.sosta.dKm, 1)} (${r.sosta.oraInizio}–${r.sosta.oraFine})${r.sosta.motivo ? ', ' + r.sosta.motivo : ''}`,
+        ])
+      : '') +
     rigaCsv(['generato il', formattaDataOra(new Date(r.generatoIl), r.tz)]);
   return '\uFEFF' + meta + '\r\n' + csvCampioni(r) + '\r\n' + csvAvvisi(r);
 }

@@ -68,6 +68,23 @@ export function leadGiorni(date) {
   return Math.max(0, (date.getTime() - Date.now()) / 86400000);
 }
 
+// Istante di un orario LOCALE (es. sosta pranzo alle 13:00) → minuti
+// dalla partenza. Se l'orario è già passato alla partenza vale il giorno
+// locale successivo, risolto ri-chiamando dataLocaleAUtc sulla data
+// dopo (mai +24 h secche: il cambio ora legale le rompe). La differenza
+// è in millisecondi UTC: DST-safe.
+export function risolviOrarioSosta(dataIso, oraSosta, tz, partenzaUtcMs) {
+  let t = dataLocaleAUtc(dataIso, oraSosta, tz).getTime();
+  if (t <= partenzaUtcMs) {
+    // Data successiva derivata a mezzogiorno UTC (immune dal fuso)
+    const domani = new Date(Date.parse(dataIso + 'T12:00:00Z') + 86400000)
+      .toISOString()
+      .slice(0, 10);
+    t = dataLocaleAUtc(domani, oraSosta, tz).getTime();
+  }
+  return (t - partenzaUtcMs) / 60000;
+}
+
 // Ora UTC arrotondata all'ora piena, formato Open-Meteo "YYYY-MM-DDTHH:00"
 export function oraApiUtc(date, arrotonda = 'giu') {
   const t = new Date(date.getTime());

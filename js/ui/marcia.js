@@ -156,7 +156,7 @@ export function renderMarcia(el, r) {
   // dopo l'inizio della fermata (assente sui risultati salvati vecchi)
   const idxSosta = r.sosta ? r.marcia.findIndex((p) => p.tMin > r.sosta.dopoMin) : -1;
   const testoSosta = r.sosta
-    ? `🍽 Sosta pranzo — ${r.sosta.durataMin} min al km ${r.sosta.dKm.toFixed(1)} (${escapeHtml(r.sosta.oraInizio)}–${escapeHtml(r.sosta.oraFine)})`
+    ? `🍽 Sosta pranzo — ${r.sosta.durataMin} min al km ${r.sosta.dKm.toFixed(1)} (${escapeHtml(r.sosta.oraInizio)}–${escapeHtml(r.sosta.oraFine)})${r.sosta.motivo ? ` · ${escapeHtml(r.sosta.motivo)}` : ''}`
     : '';
   const rigaSosta = r.sosta ? `<tr class="riga-sosta"><td colspan="13">${testoSosta}</td></tr>` : '';
   const allarme =
@@ -525,7 +525,7 @@ ${righe
   .map(
     (x, i) => `${
       r.sosta && i === r.marcia.findIndex((p) => p.tMin > r.sosta.dopoMin)
-        ? `<tr><td colspan="13" style="font-weight:bold;background:#ddd;text-align:left">🍽 Sosta pranzo — ${r.sosta.durataMin} min al km ${r.sosta.dKm.toFixed(1)} (${escapeHtml(r.sosta.oraInizio)}–${escapeHtml(r.sosta.oraFine)})</td></tr>`
+        ? `<tr><td colspan="13" style="font-weight:bold;background:#ddd;text-align:left">🍽 Sosta pranzo — ${r.sosta.durataMin} min al km ${r.sosta.dKm.toFixed(1)} (${escapeHtml(r.sosta.oraInizio)}–${escapeHtml(r.sosta.oraFine)})${r.sosta.motivo ? ` · ${escapeHtml(r.sosta.motivo)}` : ''}</td></tr>`
         : ''
     }<tr><td>${x.n}</td><td>${escapeHtml(x.ora)}</td><td>${x.tempo}</td><td>${x.km}</td>
 <td>${x.quota}</td><td>${x.pend}</td><td>${x.t}</td><td>${x.perc}</td><td>${x.raff}</td><td>${x.nuvolePdf}</td><td>${x.prob}</td><td>${x.mm}</td><td>${reteTesto(x.rete)}</td></tr>`

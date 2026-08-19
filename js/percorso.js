@@ -135,3 +135,19 @@ export function applicaQuote(percorso, campioniQuota) {
     punti,
   });
 }
+
+// Punto di quota massima del percorso (per la sosta «in vetta»): primo
+// punto col massimo in caso di plateau, punti senza quota saltati (dopo
+// un DEM parzialmente fallito le quote possono essere miste). Null se
+// nessun punto ha una quota.
+export function kmQuotaMassima(percorso) {
+  let migliore = null;
+  for (let i = 0; i < percorso.punti.length; i++) {
+    const p = percorso.punti[i];
+    if (!Number.isFinite(p.eleM)) continue;
+    if (!migliore || p.eleM > migliore.eleM) {
+      migliore = { dKm: p.dCumKm, eleM: p.eleM, idx: i };
+    }
+  }
+  return migliore;
+}

@@ -9,10 +9,10 @@
 
 import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE, AVVISO_TEMPORALE, PIANIFICATORE, VARIABILI_PIANIFICATORE } from './config.js';
 import * as storage from './storage.js';
-import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc } from './tempo.js';
+import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc, risolviOrarioSosta } from './tempo.js';
 import { campionaTraccia, bboxPunti } from './geo.js';
-import { percorsoDaGpx, percorsoDaKomoot, costruisciPercorso, campioniPerQuota, applicaQuote } from './percorso.js';
-import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza, distanzaAlTempo } from './eta.js';
+import { percorsoDaGpx, percorsoDaKomoot, costruisciPercorso, campioniPerQuota, applicaQuote, kmQuotaMassima } from './percorso.js';
+import { calcolaEta, orarioAllaDistanza, tempoAllaDistanza, distanzaAlTempo, applicaSosta } from './eta.js';
 import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/modelli.js';
 import { meteoModello, meteoConfronto, meteoSerie, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
 import { quoteDemCached } from './api/dem.js';
@@ -355,20 +355,58 @@ async function preparaPercorsoETz(percorsoIn, avvisi) {
   return { percorso, tz };
 }
 
-// Lettura dei parametri di marcia dal form (comune ai due flussi)
+// Lettura dei parametri di marcia dal form (comune ai due flussi).
+// La sosta resta grezza (sostaForm): la risoluzione di vetta e orario
+// avviene in risolviSosta, quando percorso e partenza sono noti.
 function parametriMarcia(imp) {
   const mhSalita = Number($('campo-passo').value) || imp.mhSalita;
   const pausaMinOra = Math.max(0, Number($('campo-pause').value) || 0);
-  const sostaMin = Math.max(0, Number($('campo-sosta').value) || 0);
+  const durataMin = Math.max(0, Number($('campo-sosta').value) || 0);
+  const modo = $('campo-sosta-modo').value || 'dopoOre';
   // Campo «dopo» svuotato: default del form (3 h), MAI 0 — una sosta a
   // 0 ore si collocherebbe alla partenza e slitterebbe tutti gli orari
   const dopoGrezzo = Number($('campo-sosta-dopo').value);
-  const sostaDopoOre = Number.isFinite(dopoGrezzo) && dopoGrezzo >= 0.5 ? dopoGrezzo : 3;
+  const dopoOre = Number.isFinite(dopoGrezzo) && dopoGrezzo >= 0.5 ? dopoGrezzo : 3;
+  // Campo orario svuotato: default 13:00 (stesso pattern del default 3 h)
+  const oraLocale = /^\d{2}:\d{2}$/.test($('campo-sosta-ora').value)
+    ? $('campo-sosta-ora').value
+    : '13:00';
   return {
     mhSalita,
     pausaMinOra,
-    sosta: sostaMin > 0 ? { dopoOre: sostaDopoOre, durataMin: sostaMin } : null,
+    sostaForm: durataMin > 0 ? { modo, durataMin, dopoOre, oraLocale } : null,
   };
+}
+
+// Converte la scelta del form nella sosta per calcolaEta, risolvendo
+// vetta e orario. Ritorna { modo, motivo, perEta } oppure null (con
+// avviso). Le guardie temporali (fuori gita) restano in calcolaEta.
+function risolviSosta(sostaForm, { percorso, partenzaUtcMs, dataIso, tz, avvisi }) {
+  if (!sostaForm) return null;
+  const { modo, durataMin } = sostaForm;
+  if (modo === 'vetta') {
+    const vetta = kmQuotaMassima(percorso);
+    if (!vetta) {
+      avvisi.push('Quote del percorso non disponibili: sosta «in vetta» ignorata');
+      return null;
+    }
+    return {
+      modo,
+      motivo: `in vetta (${Math.round(vetta.eleM)} m)`,
+      perEta: { durataMin, aDistanzaKm: vetta.dKm },
+    };
+  }
+  if (modo === 'orario') {
+    return {
+      modo,
+      motivo: `alle ${sostaForm.oraLocale}`,
+      perEta: {
+        durataMin,
+        dopoMin: risolviOrarioSosta(dataIso, sostaForm.oraLocale, tz, partenzaUtcMs),
+      },
+    };
+  }
+  return { modo: 'dopoOre', motivo: '', perEta: { durataMin, dopoOre: sostaForm.dopoOre } };
 }
 
 async function calcolaPrevisione(percorsoIn) {
@@ -384,9 +422,20 @@ async function calcolaPrevisione(percorsoIn) {
   if (partenzaUtc.getTime() < Date.now() - 2 * 3600000) {
     throw new Error('La partenza è nel passato: controlla data e ora');
   }
-  const opzioniMarcia = parametriMarcia(imp);
-  const mhSalita = opzioniMarcia.mhSalita;
-  const eta = calcolaEta(percorso, opzioniMarcia);
+  const par = parametriMarcia(imp);
+  const mhSalita = par.mhSalita;
+  const sostaRisolta = risolviSosta(par.sostaForm, {
+    percorso,
+    partenzaUtcMs: partenzaUtc.getTime(),
+    dataIso,
+    tz,
+    avvisi,
+  });
+  const eta = calcolaEta(percorso, {
+    mhSalita,
+    pausaMinOra: par.pausaMinOra,
+    sosta: sostaRisolta?.perEta ?? null,
+  });
   avvisi.push(...eta.avvisi);
 
   // 4. Campioni meteo e orari di passaggio
@@ -984,27 +1033,22 @@ async function calcolaPrevisione(percorsoIn) {
         : `Arrivo previsto a soli ${margineTramontoMin} min dal tramonto delle ${formattaOra(tramonto, tz)}: la regola è finire almeno 1 ora prima`
     );
   }
-  // Sosta pranzo: posizione lungo il percorso e orari, per l'evidenza
-  // nelle due tabelle. Esiste solo se cade davvero dentro la gita.
+  // Sosta pranzo: la normalizzazione (posizione, guardie, avvisi) vive
+  // in calcolaEta; qui si aggiungono orari, modalità e motivo per la
+  // riga nelle due tabelle e nel CSV
   let sosta = null;
-  if (opzioniMarcia.sosta) {
-    const dopoMin = (opzioniMarcia.sosta.dopoOre ?? 0) * 60;
-    const durataMin = opzioniMarcia.sosta.durataMin;
-    if (eta.durataTotaleMin > dopoMin + durataMin) {
-      const inizio = new Date(partenzaUtc.getTime() + dopoMin * 60000);
-      const fine = new Date(inizio.getTime() + durataMin * 60000);
-      sosta = {
-        // +1 min: dentro il salto della sosta, così la bisezione converge
-        // sul punto in cui ci si ferma
-        dKm: distanzaAlTempo(percorso.cum, eta.tCumMin, dopoMin + 1),
-        dopoMin,
-        durataMin,
-        inizioIso: inizio.toISOString(),
-        fineIso: fine.toISOString(),
-        oraInizio: formattaOra(inizio, tz),
-        oraFine: formattaOra(fine, tz),
-      };
-    }
+  if (eta.sosta) {
+    const inizio = new Date(partenzaUtc.getTime() + eta.sosta.dopoMin * 60000);
+    const fine = new Date(inizio.getTime() + eta.sosta.durataMin * 60000);
+    sosta = {
+      ...eta.sosta,
+      modo: sostaRisolta?.modo ?? 'dopoOre',
+      motivo: sostaRisolta?.motivo ?? '',
+      inizioIso: inizio.toISOString(),
+      fineIso: fine.toISOString(),
+      oraInizio: formattaOra(inizio, tz),
+      oraFine: formattaOra(fine, tz),
+    };
   }
 
   const marcia = puntiControllo(percorso, eta, 15).map((c) => {
@@ -1067,11 +1111,48 @@ async function pianifica() {
     const { percorso, tz } = await preparaPercorsoETz(percorsoCorrente, notePrep);
     if (mioPercorso !== percorsoCorrente || mia !== richiestaPianifica) return;
 
-    const eta = calcolaEta(percorso, parametriMarcia(imp));
+    const par = parametriMarcia(imp);
+    // ETA di BASE senza sosta: nomogramma, passo e pause non dipendono
+    // dalla sosta, che qui si applica sugli offset dei campioni (sposta
+    // di al più durataMin il solo campione a cavallo della fermata:
+    // approssimazione coperta dalla legenda del pannello)
+    const etaBase = calcolaEta(percorso, {
+      mhSalita: par.mhSalita,
+      pausaMinOra: par.pausaMinOra,
+      sosta: null,
+    });
     const campioni = campionaTraccia(percorso.punti, percorso.cum);
-    const offsetMin = campioni.map((c) =>
-      tempoAllaDistanza(percorso.cum, eta.tCumMin, c.dCumKm)
+    const offsetBase = campioni.map((c) =>
+      tempoAllaDistanza(percorso.cum, etaBase.tCumMin, c.dCumKm)
     );
+    const durataBase = etaBase.durataTotaleMin;
+    const durataSostaMin = par.sostaForm?.durataMin ?? 0;
+    // Dimensionamento prudente di finestra API e orizzonte: caso peggiore
+    const durataPrudente = durataBase + durataSostaMin;
+
+    // Modalità «dopo N ore» e «in vetta»: la sosta trasla rigida col
+    // candidato → un solo slittamento comune a tutte le celle
+    let offsetMin = offsetBase;
+    let durataTotaleMin = durataBase;
+    const noteSosta = [];
+    if (par.sostaForm && par.sostaForm.modo !== 'orario') {
+      const ris = risolviSosta(par.sostaForm, {
+        percorso,
+        partenzaUtcMs: 0,
+        dataIso: null,
+        tz,
+        avvisi: noteSosta,
+      });
+      if (ris) {
+        const dopoMin = Number.isFinite(ris.perEta.aDistanzaKm)
+          ? tempoAllaDistanza(percorso.cum, etaBase.tCumMin, ris.perEta.aDistanzaKm)
+          : (ris.perEta.dopoOre ?? 0) * 60;
+        if (dopoMin > 0 && dopoMin < durataBase) {
+          offsetMin = applicaSosta(offsetBase, dopoMin, durataSostaMin);
+          durataTotaleMin = durataBase + durataSostaMin;
+        }
+      }
+    }
 
     const adessoMs = Date.now();
     const candidati = candidatiPartenza({ adessoMs, tz });
@@ -1084,12 +1165,33 @@ async function pianifica() {
       return;
     }
 
+    // Modalità «a un orario»: il momento della sosta dipende dal giorno
+    // del candidato (l'orario si intende DI OGNI giorno candidato) →
+    // override per-candidato di offset e durata
+    if (par.sostaForm?.modo === 'orario') {
+      for (const cand of candidati) {
+        const dopoMinCand = risolviOrarioSosta(
+          cand.dataIso,
+          par.sostaForm.oraLocale,
+          tz,
+          cand.partenzaUtcMs
+        );
+        if (dopoMinCand > 0 && dopoMinCand < durataBase) {
+          cand.offsetMin = applicaSosta(offsetBase, dopoMinCand, durataSostaMin);
+          cand.durataTotaleMin = durataBase + durataSostaMin;
+        }
+      }
+      noteSosta.push(
+        `Sosta pranzo alle ${par.sostaForm.oraLocale} intesa di ogni giorno candidato; non applicata alle celle in cui a quell’ora la gita è già finita`
+      );
+    }
+
     // Modello: il primario a breve termine dell'area (lo stesso della
     // previsione vicina); le celle oltre il suo orizzonte restano grigie
     const bbox = bboxPunti(campioni);
     const leadPrimo = Math.max(
       1,
-      (candidati[0].partenzaUtcMs + eta.durataTotaleMin * 60000 - adessoMs) / 3600000
+      (candidati[0].partenzaUtcMs + durataPrudente * 60000 - adessoMs) / 3600000
     );
     const scelta = scegliModelli(bbox, leadPrimo);
     if (!scelta.primario) throw new Error('Nessun modello disponibile per quest’area');
@@ -1098,13 +1200,13 @@ async function pianifica() {
     const noteScelta = scelta.avvisi || [];
 
     const ultimoArrivoMs =
-      candidati[candidati.length - 1].partenzaUtcMs + eta.durataTotaleMin * 60000;
+      candidati[candidati.length - 1].partenzaUtcMs + durataPrudente * 60000;
     const limiteApiMs =
       Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00Z') + 16 * 86400000 - 1;
     const startHour = oraApiUtc(new Date(candidati[0].partenzaUtcMs - 3600000));
     const endHour = oraApiUtc(new Date(Math.min(ultimoArrivoMs + 3600000, limiteApiMs)), 'su');
 
-    const note = [...notePrep, ...eta.avvisi, ...noteScelta];
+    const note = [...notePrep, ...etaBase.avvisi, ...noteScelta, ...noteSosta];
     const serveEnsemble = modello.pop === false;
     const [serieEsito, popEsito, espoEsito] = await Promise.allSettled([
       meteoSerie({ campioni, modello, variabili: VARIABILI_PIANIFICATORE, startHour, endHour }),
@@ -1147,7 +1249,7 @@ async function pianifica() {
       popSerie,
       orizzonteMs: adessoMs + modello.orizzonteOre * 3600000,
       arrivoLatLon: { lat: ultimo.lat, lon: ultimo.lon },
-      durataTotaleMin: eta.durataTotaleMin,
+      durataTotaleMin,
     });
 
     renderPianificatore(
@@ -1348,6 +1450,14 @@ function init() {
   $('bottone-ultimo').addEventListener('click', mostraUltimo);
   $('bottone-ultimo').hidden = !storage.ultimoRisultatoLeggi();
   $('bottone-pianifica').addEventListener('click', pianifica);
+
+  // Campi condizionali della sosta: «dopo N ore» mostra le ore, «a un
+  // orario» mostra il campo time, «in vetta» non chiede nulla
+  $('campo-sosta-modo').addEventListener('change', () => {
+    const modo = $('campo-sosta-modo').value;
+    $('label-sosta-dopo').hidden = modo !== 'dopoOre';
+    $('label-sosta-ora').hidden = modo !== 'orario';
+  });
 
   initImpostazioni({
     bottoneApri: $('bottone-impostazioni'),

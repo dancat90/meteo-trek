@@ -31,7 +31,10 @@ import {
   calcolaEta,
   tempoAllaDistanza,
   distanzaAlTempo,
+  applicaSosta,
 } from '../js/eta.js';
+import { kmQuotaMassima } from '../js/percorso.js';
+import { risolviOrarioSosta } from '../js/tempo.js';
 import { scegliModelli, dentroBox, quindiciMinDisponibile, motivoNiente15Min, modelliConfronto } from '../js/api/modelli.js';
 import { MODELLI } from '../js/config.js';
 import { fascia, classeDispersione } from '../js/dispersione.js';
@@ -1019,6 +1022,99 @@ console.log('── Export CSV ──');
     nomeFileCsv(fixture)
   );
   test('avvisi vuoti → riga dedicata', csvAvvisi({ avvisi: [] }).includes('nessun avviso'));
+}
+
+console.log('── Sosta pranzo a 3 modalità ──');
+{
+  // Percorso sintetico: 12 km, salita fino a metà poi discesa (colmo a 6 km)
+  const su = tracciaSintetica({ n: 61, passoKm: 0.1, quota0: 1000, dTot: 600 });
+  const giu = tracciaSintetica({ n: 61, passoKm: 0.1, quota0: 1600, dTot: -600, lat0: su[60].lat });
+  const percorso = costruisciPercorso({ nome: 'colmo', fonte: 'gpx', punti: [...su, ...giu.slice(1)] });
+  const base = calcolaEta(percorso, { mhSalita: 400, pausaMinOra: 0, sosta: null });
+
+  // applicaSosta: slittano solo i tempi oltre la fermata
+  const arr = [0, 30, 60, 90];
+  test('applicaSosta slitta solo oltre', JSON.stringify(applicaSosta(arr, 60, 45)) === '[0,30,60,135]');
+
+  // Retrocompat: dopoMin diretto ≡ dopoOre
+  const conOre = calcolaEta(percorso, { mhSalita: 400, pausaMinOra: 0, sosta: { dopoOre: 2, durataMin: 60 } });
+  const conMin = calcolaEta(percorso, { mhSalita: 400, pausaMinOra: 0, sosta: { dopoMin: 120, durataMin: 60 } });
+  test('dopoMin 120 ≡ dopoOre 2', JSON.stringify(conOre.tCumMin) === JSON.stringify(conMin.tCumMin));
+  test('eta.sosta presente con dopoOre', conOre.sosta?.dopoMin === 120 && conOre.sosta.durataMin === 60);
+
+  // Modalità vetta: aDistanzaKm
+  const vetta = kmQuotaMassima(percorso);
+  // Tolleranza 20 m: lisciaQuote smussa il colmo della fixture sintetica
+  test('kmQuotaMassima trova il colmo', vicino(vetta.dKm, 6, 0.15) && vicino(vetta.eleM, 1600, 20), JSON.stringify(vetta));
+  const conVetta = calcolaEta(percorso, { mhSalita: 400, pausaMinOra: 0, sosta: { aDistanzaKm: vetta.dKm, durataMin: 45 } });
+  test('vetta: totale = base + durata', vicino(conVetta.durataTotaleMin, base.durataTotaleMin + 45, 0.01));
+  test('vetta: dKm esatto nel ritorno', conVetta.sosta?.dKm === vetta.dKm);
+  const iPrima = 30; // punto a 3 km, prima della vetta
+  test('vetta: punti prima invariati', conVetta.tCumMin[iPrima] === base.tCumMin[iPrima]);
+
+  // Guardie
+  const aZero = calcolaEta(percorso, { mhSalita: 400, pausaMinOra: 0, sosta: { aDistanzaKm: 0, durataMin: 45 } });
+  test('vetta alla partenza → sosta null + avviso', aZero.sosta === null && aZero.avvisi.some((a) => a.includes('partenza')));
+  const oltre = calcolaEta(percorso, { mhSalita: 400, pausaMinOra: 0, sosta: { dopoMin: base.durataTotaleMin + 60, durataMin: 45 } });
+  test('orario oltre l’arrivo → sosta null + avviso', oltre.sosta === null && oltre.avvisi.some((a) => a.includes('oltre')));
+  const arrivoV = calcolaEta(percorso, { mhSalita: 400, pausaMinOra: 0, sosta: { aDistanzaKm: percorso.totKm, durataMin: 45 } });
+  test('vetta all’arrivo → riga sì, orari no', arrivoV.sosta !== null && vicino(arrivoV.durataTotaleMin, base.durataTotaleMin, 0.01));
+
+  // kmQuotaMassima: casi limite
+  const nulli = { punti: [{ eleM: null, dCumKm: 0 }, { eleM: null, dCumKm: 1 }] };
+  test('quote tutte null → null', kmQuotaMassima(nulli) === null);
+  const misti = { punti: [{ eleM: null, dCumKm: 0 }, { eleM: 900, dCumKm: 1 }, { eleM: null, dCumKm: 2 }] };
+  test('quote miste: i null si saltano', kmQuotaMassima(misti).dKm === 1);
+  const plateau = { punti: [{ eleM: 100, dCumKm: 0 }, { eleM: 500, dCumKm: 1 }, { eleM: 500, dCumKm: 2 }] };
+  test('plateau → primo punto', kmQuotaMassima(plateau).dKm === 1);
+
+  // risolviOrarioSosta: fuso del percorso e giorno successivo
+  const p8 = Date.parse('2026-08-22T06:00:00Z'); // 08:00 locali a Roma
+  test('08→13 = 300 min', risolviOrarioSosta('2026-08-22', '13:00', 'Europe/Rome', p8) === 300);
+  const p23 = Date.parse('2026-08-22T21:00:00Z'); // 23:00 locali
+  test('23→01 = 120 min (giorno dopo)', risolviOrarioSosta('2026-08-22', '01:00', 'Europe/Rome', p23) === 120);
+  // Notte del cambio ora solare (25/10/2026): 00:30→13:00 locali = 13,5 h reali
+  const pOtt = Date.parse('2026-10-24T22:30:00Z'); // 00:30 CEST del 25/10
+  test('cambio ora: 00:30→13:00 = 810 min', risolviOrarioSosta('2026-10-25', '13:00', 'Europe/Rome', pOtt) === 810, String(risolviOrarioSosta('2026-10-25', '13:00', 'Europe/Rome', pOtt)));
+
+  // valutaFinestre: override per-candidato (sosta a orario fisso)
+  const t0Ms = Date.parse('2026-08-20T00:00:00Z');
+  const cost = (v) => Array(24).fill(v);
+  const serie1 = [{
+    t0Ms,
+    valori: {
+      temperature_2m: cost(15), apparent_temperature: cost(14), relative_humidity_2m: cost(50),
+      precipitation: cost(0), precipitation_probability: cost(5), wind_speed_10m: cost(10),
+      wind_gusts_10m: cost(20), wind_direction_10m: cost(0),
+      weather_code: cost(1).map((v, h) => (h === 10 || h === 11 ? 95 : v)), cape: cost(100),
+    },
+  }];
+  const campione1 = [{ lat: 46, lon: 11, eleM: 1500, dCumKm: 10 }];
+  const candBase = { partenzaUtcMs: t0Ms, dataIso: '2026-08-20', oraLocale: '02:00' };
+  const candOverride = { ...candBase, offsetMin: [720], durataTotaleMin: 780 };
+  const [senza, con] = valutaFinestre({
+    candidati: [candBase, candOverride],
+    offsetMin: [600],
+    campioni: campione1,
+    serieCampioni: serie1,
+    orizzonteMs: t0Ms + 96 * 3600000,
+    arrivoLatLon: null,
+    durataTotaleMin: 600,
+  });
+  test('senza override: campione nel temporale', senza.scoreMax === 3);
+  test('override sposta il campione fuori dal temporale', con.scoreMax === 0, JSON.stringify(con.peggior));
+  test('override cambia l’arrivo', con.arrivoUtcMs === t0Ms + 780 * 60000 && senza.arrivoUtcMs === t0Ms + 600 * 60000);
+
+  // CSV: riga meta della sosta col motivo
+  const rCsv = {
+    nome: 'x', totKm: 10, dPlusM: 1, dMinusM: 1, tz: 'Europe/Rome',
+    partenzaIso: '2026-08-22T06:00:00.000Z', arrivoIso: '2026-08-22T12:00:00.000Z',
+    generatoIl: Date.parse('2026-08-19T10:00:00Z'), modello: { nome: 'm' }, avvisi: [], campioni: [],
+    sosta: { dKm: 6, durataMin: 45, oraInizio: '12:00', oraFine: '12:45', motivo: 'in vetta (1600 m)' },
+  };
+  test('CSV: riga sosta col motivo', csvCompleto(rCsv).includes('in vetta (1600 m)'));
+  const { sosta: _s, ...rSenza } = rCsv;
+  test('CSV: risultato senza sosta invariato', !csvCompleto(rSenza).includes('sosta pranzo'));
 }
 
 console.log('── Fix review: tramonto notturno, CSV injection, GPX ──');

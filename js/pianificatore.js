@@ -120,7 +120,11 @@ export function valutaFinestre({
 }) {
   return candidati.map((cand) => {
     const partenzaUtcMs = cand.partenzaUtcMs;
-    const arrivoUtcMs = partenzaUtcMs + durataTotaleMin * 60000;
+    // Override per-candidato (sosta a orario fisso): offset e durata
+    // possono variare col giorno del candidato
+    const offs = cand.offsetMin ?? offsetMin;
+    const durTot = cand.durataTotaleMin ?? durataTotaleMin;
+    const arrivoUtcMs = partenzaUtcMs + durTot * 60000;
 
     // Tramonto sulla posizione di arrivo (stessa regola del riepilogo)
     let tramonto = null;
@@ -147,7 +151,7 @@ export function valutaFinestre({
     let campioniSenzaDati = 0;
     let campioniConBuco = 0;
     for (let i = 0; i < campioni.length; i++) {
-      const istante = partenzaUtcMs + (offsetMin[i] ?? 0) * 60000;
+      const istante = partenzaUtcMs + (offs[i] ?? 0) * 60000;
       const estratto = valoriAllOra(serieCampioni?.[i], istante);
       if (!estratto) {
         campioniSenzaDati++;

@@ -121,7 +121,7 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null, 
   // Riga della sosta pranzo: inserita fra i due campioni a cavallo del
   // punto di fermata (colore dedicato, distinto dalla scala del rischio)
   const rigaSosta = sosta
-    ? `<tr class="riga-sosta"><td colspan="15">🍽 Sosta pranzo — ${sosta.durataMin} min al km ${sosta.dKm.toFixed(1)} (${escapeHtml(sosta.oraInizio)}–${escapeHtml(sosta.oraFine)})</td></tr>`
+    ? `<tr class="riga-sosta"><td colspan="15">🍽 Sosta pranzo — ${sosta.durataMin} min al km ${sosta.dKm.toFixed(1)} (${escapeHtml(sosta.oraInizio)}–${escapeHtml(sosta.oraFine)})${sosta.motivo ? ` · ${escapeHtml(sosta.motivo)}` : ''}</td></tr>`
     : '';
   const idxSosta = sosta ? campioni.findIndex((c) => c.dCumKm > sosta.dKm) : -1;
 
