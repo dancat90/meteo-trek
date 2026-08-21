@@ -5,7 +5,7 @@
 // click-through verso la previsione completa.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { COLORI_SEVERITA, ETICHETTE_RISCHIO, PIANIFICATORE } from '../config.js';
+import { COLORI_SEVERITA, ETICHETTE_RISCHIO, PIANIFICATORE, FONDO_CLASSI } from '../config.js';
 import { formattaOra } from '../tempo.js';
 import { escapeHtml } from './mappa.js';
 
@@ -28,6 +28,16 @@ function badgeTramonto(f) {
   if (f.tramonto.classe === 'dopo') return '<span class="tramonto-badge" title="arrivo DOPO il tramonto">☾</span>';
   if (f.tramonto.classe === 'stretto') return '<span class="tramonto-badge" title="arrivo a meno di 1 h dal tramonto">!</span>';
   return '';
+}
+
+// Marcatore del fondo nella cella: SOLO neve e ghiaccio, che entrano nel
+// rischio. Il fango resta nel dettaglio: in una cella da 40 px un quarto
+// simbolo la renderebbe illeggibile senza aggiungere una decisione.
+function badgeFondo(f) {
+  const c = f?.fondo?.classe;
+  if (c !== 'neve' && c !== 'ghiaccio' && c !== 'crosta') return '';
+  const cl = FONDO_CLASSI[c];
+  return `<span class="fondo-badge" title="${escapeHtml(f.fondo.testo || cl.etichetta)}">${cl.icona}</span>`;
 }
 
 function motivoGrigio(f, nomeModello, orizzonteOre) {
@@ -69,7 +79,7 @@ export function renderPianificatore(container, dati, onScegli) {
           return `<div class="cella-griglia attiva" data-idx="${idx}"
             style="background:${COLORI_SEVERITA[f.scoreMax]}"
             title="${escapeHtml(`partenza ${f.oraLocale}: rischio massimo ${ETICHETTE_RISCHIO[f.scoreMax]}`)}"
-            role="button" tabindex="0">${f.scoreMax}${parziale}${badgeTramonto(f)}</div>`;
+            role="button" tabindex="0">${f.scoreMax}${parziale}${badgeFondo(f)}${badgeTramonto(f)}</div>`;
         })
         .join('');
       return `<div class="cella-griglia intestazione riga-giorno">${escapeHtml(etichettaGiorno(g))}</div>${celle}`;
@@ -90,7 +100,8 @@ export function renderPianificatore(container, dati, onScegli) {
       </div>
       <div class="legenda-pianificatore forbice">
         Cella = rischio massimo lungo il percorso per quella partenza (0 buono → 3 severo) ·
-        ☾ arrivo dopo il tramonto · ! margine sotto 1 h · ~ dati parziali · · oltre orizzonte o senza dati.
+        ☾ arrivo dopo il tramonto · ! margine sotto 1 h · ~ dati parziali · · oltre orizzonte o senza dati ·
+        ❄ neve al suolo · 🧊 ghiaccio o crosta dura (il fango non compare qui: apri il dettaglio).
         Il pianificatore valuta solo il rischio a 5 canali sul modello primario: dettaglio 15 min,
         confronto fra modelli, UV, instabilità (lifted index) e affidabilità restano nella previsione
         completa, che è il riferimento — lo score di una cella può differire fino a 2 classi nei casi
@@ -118,11 +129,17 @@ export function renderPianificatore(container, dati, onScegli) {
         ? `arrivo ${-f.tramonto.margineMin} min DOPO il tramonto delle ${formattaOra(new Date(f.tramonto.tramontoUtcMs), tz)}`
         : `margine sul tramonto ${f.tramonto.margineMin} min (tramonto ${formattaOra(new Date(f.tramonto.tramontoUtcMs), tz)})`
       : 'tramonto non calcolabile';
+    // Stato del fondo del giorno candidato: ogni partenza ha la sua
+    // storia di pioggia, neve e gelo nei giorni precedenti
+    const fondoTxt = f.fondo
+      ? `fondo: ${FONDO_CLASSI[f.fondo.classe]?.icona ?? ''} ${FONDO_CLASSI[f.fondo.classe]?.etichetta ?? f.fondo.classe} al km ${f.fondo.dCumKm.toFixed(1)} — ${f.fondo.testo}`
+      : 'stato del fondo non valutato per questa partenza';
     dettaglio.innerHTML = `
       <div><strong>${escapeHtml(etichettaGiorno(f.dataIso))} ${escapeHtml(f.oraLocale)}</strong>
         → arrivo ${formattaOra(new Date(f.arrivoUtcMs), tz)}</div>
       <div>${distr || '—'}</div>
       <div>${canali}</div>
+      <div>${escapeHtml(fondoTxt)}</div>
       <div>${escapeHtml(tram)}${f.campioniSenzaDati ? ` · ${f.campioniSenzaDati} tratti senza dati` : ''}</div>
       <button type="button" class="scegli-finestra">Prevedi per questo orario</button>`;
     dettaglio.hidden = false;

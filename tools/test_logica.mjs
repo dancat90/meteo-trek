@@ -69,6 +69,10 @@ import { puntoDaTraccia, mercatorPx, scegliZoom, raggruppaPunti } from '../js/ui
 import { windchillC, classeCongelamento } from '../js/windchill.js';
 import { mrtDiNapoli, cosszaDaToa, giornoAnnoUtc } from '../js/radiante.js';
 import { stUtci } from '../js/utci-poly.js';
+import { versantiDaQuote, fattoreFusione, rombo } from '../js/versante.js';
+import { preparaFondo, statoFondo, sintesiFondo, pesoPioggia, descriviFondo } from '../js/fondo.js';
+import { cellaFondo, renderTabella } from '../js/ui/tabella.js';
+import { bloccoFondoPdf } from '../js/ui/marcia.js';
 
 let falliti = 0;
 function test(nome, condizione, dettaglio = '') {
@@ -1373,6 +1377,239 @@ console.log('── Pianificatore: estrazione e valutazione ──');
   test('serieNormalizzate: serie intere', norm.valori.temperature_2m[1] === 11 && norm.valori.cape[0] === null);
   test('serieNormalizzate: fuori dominio → null', serieNormalizzate({ hourly: { time: ['2026-08-20T00:00'], temperature_2m: [null] } }, ['temperature_2m'], 'x') === null);
   test('serieNormalizzate: hourly assente → null', serieNormalizzate({}, ['temperature_2m'], 'x') === null);
+}
+
+console.log('── Versante solare (aspect dal DEM) ──');
+{
+  // Pendio planare: quota = centro + p·r·cos(θ). p>0 = sale verso nord,
+  // quindi il versante GUARDA a sud. Sonde nell'ordine deterministico di
+  // puntiSondaEsposizione: [centro, dir0×raggi, dir1×raggi, …].
+  const RAGGI = [300, 600, 1200];
+  function quotePendio(p, centro = 1000) {
+    const q = [centro];
+    for (let di = 0; di < 8; di++) {
+      const rad = (di * 45 * Math.PI) / 180;
+      for (const r of RAGGI) q.push(centro + p * r * Math.cos(rad));
+    }
+    return q;
+  }
+  const camp = [{ lat: 46, lon: 11, eleM: 1000 }];
+
+  const sud = versantiDaQuote(camp, quotePendio(0.2))[0];
+  test('pendio che scende a sud → aspect 180°', vicino(sud.aspectGradi, 180, 1), String(sud.aspectGradi));
+  test('pendio a sud → pendenza 20%', vicino(sud.pendenzaPct, 20, 0.5), String(sud.pendenzaPct));
+  test('versante sud → fusione ×1,4', vicino(sud.fattoreFusione, 1.4, 0.01), String(sud.fattoreFusione));
+  test('versante sud → rombo S', sud.nome === 'S', sud.nome);
+
+  const nord = versantiDaQuote(camp, quotePendio(-0.2))[0];
+  test('pendio che scende a nord → aspect 0°', vicino(((nord.aspectGradi + 180) % 360) - 180, 0, 1), String(nord.aspectGradi));
+  test('versante nord → fusione ×0,6 (neve che dura)', vicino(nord.fattoreFusione, 0.6, 0.01), String(nord.fattoreFusione));
+
+  const piano = versantiDaQuote(camp, quotePendio(0))[0];
+  test('pianoro → nessuna correzione di fusione', piano.fattoreFusione === 1, String(piano.fattoreFusione));
+
+  // Pendenza sotto la soglia: l'effetto si smorza in proporzione, non a scalino
+  test('pendenza 5% a sud → fusione a metà ampiezza', vicino(fattoreFusione(180, 5), 1.2, 0.01), String(fattoreFusione(180, 5)));
+  test('est e ovest → nessuna correzione', vicino(fattoreFusione(90, 30), 1, 0.01) && vicino(fattoreFusione(270, 30), 1, 0.01));
+  test('DEM assente → fattore 1', versantiDaQuote(camp, null) === null);
+  test('rombo 200° → S', rombo(200) === 'S', rombo(200));
+}
+
+console.log('── Stato del fondo (fango, neve, ghiaccio) ──');
+{
+  const N = 200;
+  const IDX = 150;
+  const ISTANTE = IDX * 3600000;
+  // Costruttore di serie sintetiche: ogni variabile è un valore costante
+  // oppure una funzione dell'indice orario
+  function serieFondo(spec, n = N) {
+    const base = {
+      rain: 0,
+      snowfall: 0,
+      snow_depth: 0,
+      temperature_2m: 5,
+      soil_temperature_0cm: 5,
+      et0_fao_evapotranspiration: 0,
+    };
+    const valori = {};
+    for (const [k, def] of Object.entries({ ...base, ...spec })) {
+      valori[k] = Array.from({ length: n }, (_, i) => (typeof def === 'function' ? def(i) : def));
+    }
+    return { t0Ms: 0, valori };
+  }
+  const stato = (spec, opzioni = {}, n = N) =>
+    statoFondo(preparaFondo(serieFondo(spec, n)), {
+      istanteMs: ISTANTE,
+      quotaM: 1500,
+      ...opzioni,
+    });
+
+  test('peso pioggia: ultime 24 h a peso pieno', pesoPioggia(3) === 1);
+  test('peso pioggia: 60 h fa a peso ridotto', pesoPioggia(60) === 0.3);
+  test('peso pioggia: oltre la finestra → 0', pesoPioggia(100) === 0);
+
+  // ── Fango ──
+  const fangoso = stato({ rain: (i) => (i > IDX - 21 && i <= IDX ? 1 : 0) });
+  test('21 mm nelle ultime 21 h → fangoso', fangoso.classe === 'fangoso', JSON.stringify(fangoso.fango));
+  test('fango: bilancio netto ≈ 21 mm', vicino(fangoso.fango.mmNetti, 21, 0.1), String(fangoso.fango.mmNetti));
+  test('fango NON entra nel rischio complessivo', fangoso.scoreRischio === 0, String(fangoso.scoreRischio));
+
+  const asciugato = stato({
+    rain: (i) => (i > IDX - 70 && i < IDX - 60 ? 1 : 0),
+    et0_fao_evapotranspiration: 0.15,
+  });
+  test('pioggia vecchia + evaporazione → asciutto', asciugato.classe === 'asciutto', JSON.stringify(asciugato.fango));
+
+  // Rovescio violento: netti azzerati dall'evaporazione, ma il sentiero
+  // resta inciso → l'avviso deve scattare lo stesso
+  const rovescio = stato({
+    rain: (i) => (i === IDX - 5 ? 21 : 0),
+    et0_fao_evapotranspiration: 0.5,
+  });
+  test('rovescio 21 mm/h → livello 2 anche con bilancio a zero', rovescio.fango.livello === 2 && rovescio.fango.rovescio, JSON.stringify(rovescio.fango));
+
+  // ── Neve ──
+  const nevoso = stato({
+    snowfall: (i) => (i > IDX - 6 && i <= IDX ? 2 : 0),
+    temperature_2m: -3,
+    soil_temperature_0cm: -3,
+  });
+  test('12 cm di neve fresca col gelo → classe neve', nevoso.classe === 'neve', JSON.stringify(nevoso.neve));
+  test('neve continua → livello 2', nevoso.neve.livello === 2, String(nevoso.neve.cm));
+  test('neve entra nel rischio con tetto 2', nevoso.scoreRischio === 2, String(nevoso.scoreRischio));
+
+  const nevefusa = stato({
+    snowfall: (i) => (i === IDX - 100 ? 10 : 0),
+    temperature_2m: (i) => (i > IDX - 100 ? 10 : -1),
+  });
+  test('neve caduta e poi 4 giorni a 10 °C → fusa', nevefusa.neve.cm < 1, String(nevefusa.neve.cm));
+
+  // Il manto del modello vede anche il nevaio caduto PRIMA della finestra
+  const nevaio = stato({ snow_depth: 0.25, temperature_2m: -5, soil_temperature_0cm: -5 });
+  test('manto del modello 25 cm → neve al suolo', vicino(nevaio.neve.cm, 25, 0.1), String(nevaio.neve.cm));
+
+  // Versante nord: la stessa neve resiste di più
+  const spec = { snowfall: (i) => (i === IDX - 90 ? 20 : 0), temperature_2m: 2 };
+  const aSud = stato(spec, { versante: { nome: 'S', aspectGradi: 180, pendenzaPct: 25, fattoreFusione: 1.4 } });
+  const aNord = stato(spec, { versante: { nome: 'N', aspectGradi: 0, pendenzaPct: 25, fattoreFusione: 0.6 } });
+  test('a nord resta più neve che a sud', aNord.neve.cm > aSud.neve.cm, `${aNord.neve.cm} vs ${aSud.neve.cm}`);
+
+  // ── Ghiaccio ──
+  const ghiaccio = stato({
+    rain: (i) => (i === IDX - 30 ? 2 : 0),
+    soil_temperature_0cm: (i) => (i >= IDX - 17 && i < IDX - 2 ? -2 : 2),
+  });
+  test('acqua in 48 h + gelo notturno → ghiaccio probabile', ghiaccio.ghiaccio.esito === 'probabile', JSON.stringify(ghiaccio.ghiaccio));
+  test('ghiaccio probabile → livello 2 nel rischio', ghiaccio.scoreRischio === 2);
+  test('gelo letto sul suolo, non sull’aria', ghiaccio.ghiaccio.fonteT === 'suolo');
+
+  const geloAsciutto = stato({ rain: 0, soil_temperature_0cm: -5, temperature_2m: -5 });
+  test('freddo SENZA acqua → nessun ghiaccio', geloAsciutto.ghiaccio.esito === 'no' && geloAsciutto.classe === 'asciutto');
+
+  const ghiaccioOra = stato({
+    rain: (i) => (i === IDX - 10 ? 3 : 0),
+    soil_temperature_0cm: (i) => (i >= IDX - 8 ? -1 : 3),
+  });
+  test('suolo sotto zero al passaggio → ghiaccio certo (livello 3)', ghiaccioOra.ghiaccio.esito === 'certo' && ghiaccioOra.scoreRischio === 3, JSON.stringify(ghiaccioOra.ghiaccio));
+
+  // Crosta dura: neve residua + ciclo gelo-disgelo. Aria sempre sotto zero
+  // (nessuna fusione), suolo che oscilla attorno allo zero.
+  const crosta = stato({
+    snowfall: (i) => (i === IDX - 60 ? 5 : 0),
+    temperature_2m: -1,
+    soil_temperature_0cm: (i) => (i >= IDX - 30 && i < IDX - 20 ? 1 : -1),
+  });
+  test('neve + ciclo gelo-disgelo → crosta dura', crosta.ghiaccio.esito === 'crosta', JSON.stringify(crosta.ghiaccio));
+  test('crosta dura → livello massimo di rischio', crosta.scoreRischio === 3 && crosta.livello === 3);
+  test('crosta: almeno un ciclo contato', crosta.ghiaccio.cicli >= 1, String(crosta.ghiaccio.cicli));
+
+  // ── Prudenza sui dati mancanti ──
+  const corto = statoFondo(preparaFondo(serieFondo({}, 40)), { istanteMs: 39 * 3600000, quotaM: 1500 });
+  test('finestra troppo corta → ignoto, MAI asciutto', corto.classe === 'ignoto' && corto.dati === 'assenti', JSON.stringify(corto.motivo));
+  test('stato ignoto → nessun punteggio di rischio', corto.scoreRischio === 0 && corto.livello === 0);
+  test('serie assente → ignoto', statoFondo(null, { istanteMs: 0 }).classe === 'ignoto');
+  test('istante fuori finestra → ignoto', stato({}, {}, N).classe !== undefined && statoFondo(preparaFondo(serieFondo({})), { istanteMs: 900 * 3600000 }).classe === 'ignoto');
+  test('preparaFondo su serie vuota → null', preparaFondo(null) === null);
+
+  // ── Valanghe: rimando al bollettino, mai un grado calcolato ──
+  const valanga = stato(
+    { snowfall: (i) => (i > IDX - 20 && i <= IDX ? 2 : 0), temperature_2m: -4, soil_temperature_0cm: -4 },
+    { versante: { nome: 'N', aspectGradi: 0, pendenzaPct: 70, fattoreFusione: 0.6 } }
+  );
+  test('40 cm in 72 h su pendio a 70% → rimando al bollettino', valanga.neve.valanga === true, JSON.stringify(valanga.neve));
+  const valangaDolce = stato(
+    { snowfall: (i) => (i > IDX - 20 && i <= IDX ? 2 : 0), temperature_2m: -4 },
+    { versante: { nome: 'N', aspectGradi: 0, pendenzaPct: 12, fattoreFusione: 0.6 } }
+  );
+  test('stessa neve su pendio dolce → nessun rimando valanghe', valangaDolce.neve.valanga === false);
+
+  // ── Quota alta: la stima residua perde significato ──
+  const alta = stato({ snow_depth: 0.4, temperature_2m: -5, soil_temperature_0cm: -5 }, { quotaM: 2800 });
+  test('sopra 2500 m → limite dichiarato nel testo', alta.neve.quotaStabile === true && /2\.500 m/.test(alta.testo));
+
+  // ── Testo e cella ──
+  test('testo del fondo non vuoto', typeof fangoso.testo === 'string' && fangoso.testo.length > 10);
+  test('descriviFondo su ignoto non mente', /non valutabile/.test(descriviFondo(corto)));
+  test('cella tabella senza dato → trattino', cellaFondo(null) === '–');
+  test('cella tabella su neve mostra i cm', /cm/.test(cellaFondo(nevoso)));
+
+  // ── Sintesi di percorso ──
+  const campioniS = [
+    { eleM: 900, dCumKm: 0 },
+    { eleM: 1800, dCumKm: 5 },
+    { eleM: 2100, dCumKm: 9 },
+  ];
+  const sint = sintesiFondo([asciugato, nevoso, nevoso], campioniS);
+  test('sintesi: classe peggiore = neve', sint.classe === 'neve', sint.classe);
+  test('sintesi: quota di inizio del problema', sint.quotaInizioM === 1800, String(sint.quotaInizioM));
+  test('sintesi: conteggio dei tratti coinvolti', sint.trattiClasse === 2 && sint.totale === 3);
+  const sintIgnota = sintesiFondo([corto, corto], campioniS);
+  test('sintesi tutta ignota → dichiarata', sintIgnota.classe === 'ignoto' && sintIgnota.ignoti === 2);
+
+  // ── Innesto nel rischio a canali ──
+  test('canale fondo assente se non calcolato', scoreCanali({}, 10).fondo === undefined);
+  test('canale fondo presente se calcolato', scoreCanali({}, 10, 3).fondo === 3);
+  test('canale fondo clampato a 0-3', scoreCanali({}, 10, 9).fondo === 3);
+  test('fusione prende il fondo quando è il peggiore', fusione(scoreCanali({}, 10, 3)) === 3);
+  test('fondo fra i canali attivi', canaliAttivi(scoreCanali({}, 10, 2)).some((k) => k.nome.startsWith('fondo')));
+
+  // ── Coerenza della tabella: colonne di testata = celle per riga ──
+  // Con una colonna nuova è facilissimo scordare un colspan o un <td>:
+  // la tabella slitterebbe di una cella senza errori a console.
+  {
+    const finto = { innerHTML: '', hidden: true, querySelectorAll: () => [] };
+    const campioniT = [
+      { dCumKm: 0, oraLocale: '08:00', eleM: 1000, valori: {}, score: 0, fondo: nevoso, canaliAttivi: [] },
+      { dCumKm: 4, oraLocale: '10:00', eleM: 1800, valori: {}, score: 1, fondo: fangoso, canaliAttivi: [] },
+    ];
+    renderTabella(finto, {
+      campioni: campioniT,
+      unitaVento: 'kmh',
+      sosta: { durataMin: 30, dKm: 2, oraInizio: '12:00', oraFine: '12:30', motivo: '' },
+    });
+    const html = finto.innerHTML;
+    const nTh = (html.match(/<th>/g) || []).length;
+    const primaRiga = html.split('<tr class="riga-dati"')[1]?.split('</tr>')[0] ?? '';
+    const nTd = (primaRiga.match(/<td>/g) || []).length;
+    test('tabella: celle per riga = colonne di testata', nTh === nTd, `${nTh} th vs ${nTd} td`);
+    const colspan = [...html.matchAll(/colspan="(\d+)"/g)].map((m) => Number(m[1]));
+    test('tabella: ogni colspan copre tutte le colonne', colspan.length > 0 && colspan.every((c) => c === nTh), `${JSON.stringify(colspan)} vs ${nTh}`);
+    test('tabella: la colonna fondo compare in testata', /<th>fondo<\/th>/.test(html));
+  }
+
+  // ── PDF: senza dati il riquadro parla, non tace ──
+  test(
+    'PDF: fondo non valutabile dichiarato',
+    /non valutabile/.test(bloccoFondoPdf({ fondoSintesi: null, fondoAttivo: true }))
+  );
+  test(
+    'PDF: risultato salvato vecchio → nessun riquadro inventato',
+    bloccoFondoPdf({}) === ''
+  );
+  test(
+    'PDF: funzione spenta → nessun riquadro',
+    bloccoFondoPdf({ fondoSintesi: sint, fondoAttivo: false }) === ''
+  );
 }
 
 console.log('');

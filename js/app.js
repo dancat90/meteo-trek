@@ -7,7 +7,7 @@
 // di un percorso abbandonato.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE, AVVISO_TEMPORALE, PIANIFICATORE, VARIABILI_PIANIFICATORE } from './config.js';
+import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE, AVVISO_TEMPORALE, PIANIFICATORE, VARIABILI_PIANIFICATORE, VARIABILI_FONDO, FONDO, FONDO_CLASSI } from './config.js';
 import * as storage from './storage.js';
 import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc, risolviOrarioSosta } from './tempo.js';
 import { campionaTraccia, bboxPunti } from './geo.js';
@@ -17,6 +17,8 @@ import { scegliModelli, quindiciMinDisponibile, motivoNiente15Min } from './api/
 import { meteoModello, meteoConfronto, meteoSerie, fusoOrario, quoteDem, quoteCelle } from './api/meteo.js';
 import { quoteDemCached } from './api/dem.js';
 import { puntiSondaEsposizione, profiliDaQuote, fattoreEsposizione } from './esposizione.js';
+import { versantiDaQuote } from './versante.js';
+import { preparaFondo, statoFondo, sintesiFondo } from './fondo.js';
 import { fascia, classeDispersione } from './dispersione.js';
 import { ensemblePrecipitazione, ensemblePopSerie } from './api/ensemble.js';
 import { candidatiPartenza, valutaFinestre } from './pianificatore.js';
@@ -468,6 +470,14 @@ async function calcolaPrevisione(percorsoIn) {
   }
   const finestra = { startHour, endHour };
 
+  // Finestra retrospettiva dello stato del fondo: dalle 120 h prima del
+  // primo passaggio fino all'arrivo. Chiamata SEPARATA e leggera (6
+  // variabili): se la rete in montagna la fa fallire, il resto della
+  // previsione arriva comunque. L'utente può spegnerla dalle impostazioni
+  // per risparmiare dati.
+  const fondoAttivo = imp.fondoAttivo !== false;
+  const fondoStart = oraApiUtc(new Date(orari[0].getTime() - FONDO.oreNeve * 3600000));
+
   // 6. Chiamate in parallelo: una per modello + ensemble
   const chiamata = (modello, variabili) =>
     meteoModello({
@@ -479,7 +489,7 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito, espoEsito, celleUvEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito, espoEsito, celleUvEsito, fondoEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
@@ -502,16 +512,34 @@ async function calcolaPrevisione(percorsoIn) {
     caricaGriglia(),
     // Aree protette attraversate + regole sui cani (Overpass + tabella)
     areeConRegole(campioni),
-    // Profili di esposizione orografica: sonde DEM a 8 direzioni per
-    // campione (cache locale: il terreno non cambia). Ramo protetto
-    // dall'allSettled: il fallimento degrada a fattore 1 con avviso
-    (async () =>
-      profiliDaQuote(campioni, await quoteDemCached(puntiSondaEsposizione(campioni))))(),
+    // Sonde DEM a 8 direzioni per campione (cache locale: il terreno non
+    // cambia). Le STESSE quote alimentano due letture diverse:
+    // - profili di esposizione orografica → correzione del vento;
+    // - versante solare (aspect) e pendenza → fusione di neve e ghiaccio.
+    // Ramo protetto dall'allSettled: il fallimento degrada a fattore 1
+    // con avviso, senza chiamate di rete aggiuntive.
+    (async () => {
+      const quote = await quoteDemCached(puntiSondaEsposizione(campioni));
+      return {
+        profili: profiliDaQuote(campioni, quote),
+        versanti: versantiDaQuote(campioni, quote),
+      };
+    })(),
     // Quota vera delle celle del modello che fornisce l'UV via ponte
     // (GFS ~13 km): la correzione di quota dell'UV deve usare QUELLA
     // cella, non quella del primario a ~2 km (delta molto diverso)
     scelta.confronto?.some((m) => m.id === 'gfs_seamless')
       ? quoteCelle(campioni, MODELLI.gfs_seamless)
+      : Promise.resolve(null),
+    // Serie retrospettive per lo stato del fondo (fango, neve, ghiaccio)
+    fondoAttivo
+      ? meteoSerie({
+          campioni,
+          modello: scelta.primario,
+          variabili: VARIABILI_FONDO,
+          startHour: fondoStart,
+          endHour,
+        })
       : Promise.resolve(null),
   ]);
 
@@ -579,11 +607,53 @@ async function calcolaPrevisione(percorsoIn) {
   }
 
   // Correzione orografica del vento: profili a 8 settori per campione
-  const profiliEspo = espoEsito.status === 'fulfilled' ? espoEsito.value : null;
+  const demRes = espoEsito.status === 'fulfilled' ? espoEsito.value : null;
+  const profiliEspo = demRes?.profili ?? null;
+  const versanti = demRes?.versanti ?? null;
   if (!profiliEspo) {
     avvisi.push(
       'Correzione orografica del vento non disponibile (modello del terreno non raggiungibile): vento come da modello'
     );
+  }
+  if (!versanti && fondoAttivo) {
+    avvisi.push(
+      'Versante dei pendii non ricavabile: la fusione di neve e ghiaccio non tiene conto dell’esposizione al sole'
+    );
+  }
+
+  // Stato del fondo: serie retrospettive del modello primario. Il ripiego
+  // sul modello globale è dichiarato, non silenzioso: la sua risoluzione
+  // grossolana rende l'avviso indicativo, non puntuale.
+  let fondoSerie = fondoEsito?.status === 'fulfilled' ? fondoEsito.value : null;
+  let fondoModelloNome = scelta.primario.nome;
+  if (fondoAttivo && (!fondoSerie || fondoSerie.copertura < 0.5)) {
+    try {
+      fondoSerie = await meteoSerie({
+        campioni,
+        modello: MODELLI.best_match,
+        variabili: VARIABILI_FONDO,
+        startHour: fondoStart,
+        endHour,
+      });
+      if (fondoSerie && fondoSerie.copertura >= 0.5) {
+        fondoModelloNome = MODELLI.best_match.nome;
+        avvisi.push(
+          `Stato del fondo dal modello globale ${MODELLI.best_match.nome} (~${MODELLI.best_match.risoluzioneKm} km): ${scelta.primario.nome} non copre la finestra dei giorni precedenti — avviso indicativo`
+        );
+      } else {
+        fondoSerie = null;
+      }
+    } catch {
+      fondoSerie = null;
+    }
+    if (!fondoSerie) {
+      avvisi.push(
+        'Stato del fondo non disponibile: nessun modello copre i giorni prima della gita. L’assenza dell’avviso NON significa sentiero asciutto.'
+      );
+    }
+  }
+  if (!fondoAttivo) {
+    avvisi.push('Avviso sullo stato del fondo disattivato nelle impostazioni');
   }
 
   // Quote celle: valide solo se il modello usato è rimasto il primario;
@@ -619,6 +689,12 @@ async function calcolaPrevisione(percorsoIn) {
   }
 
   // 8. Assemblaggio per campione
+  // Serie del fondo estratte una volta sola: il motore le rilegge per
+  // ogni campione senza ricostruirle
+  const fondoPrep = fondoSerie
+    ? campioni.map((_, i) => preparaFondo(fondoSerie.perCampione?.[i]))
+    : null;
+  const statiFondo = [];
   const arricchiti = [];
   let trattiQuotaLontana = 0;
   let trattiCongelamento = 0;
@@ -724,7 +800,25 @@ async function calcolaPrevisione(percorsoIn) {
     if (uvCorr) {
       valoriRischio = { ...valoriRischio, uv_index: uvCorr.uv };
     }
-    const canali = p ? scoreCanali(valoriRischio, percepitaC) : {};
+    // Stato del fondo al passaggio: fango, neve residua, ghiaccio, con la
+    // fusione modulata sul versante. Entra nel rischio solo per la parte
+    // ghiaccio/neve (il cap sta dentro scoreRischio, vedi fondo.js).
+    const fondo = fondoPrep
+      ? statoFondo(fondoPrep[i], {
+          istanteMs: orari[i].getTime(),
+          quotaM: c.eleM,
+          versante: versanti?.[i] ?? null,
+        })
+      : null;
+    statiFondo.push(fondo);
+
+    const canali = p
+      ? scoreCanali(
+          valoriRischio,
+          percepitaC,
+          fondo && fondo.dati !== 'assenti' ? fondo.scoreRischio : null
+        )
+      : {};
     const score = p ? fusione(canali) : 0;
 
     const vSec = sec?.perCampione?.[i]?.valori;
@@ -941,6 +1035,7 @@ async function calcolaPrevisione(percorsoIn) {
       rete,
       nuvole,
       visibilita,
+      fondo,
       fontePercepita:
         oper.governa === 'windchill'
           ? usaUtci
@@ -998,6 +1093,30 @@ async function calcolaPrevisione(percorsoIn) {
   const senzaDati = arricchiti.filter((a) => a.senzaDati).length;
   if (senzaDati) {
     avvisi.push(`${senzaDati} campioni senza dati (fuori dominio del modello)`);
+  }
+
+  // Stato del fondo: sintesi di percorso + avvisi aggregati. Il fango non
+  // entra nel rischio complessivo ma un avviso lo merita: cambia la scelta
+  // delle calzature e i tempi in discesa.
+  const fondoSintesi = fondoSerie ? sintesiFondo(statiFondo, campioni) : null;
+  if (fondoSintesi && fondoSintesi.classe !== 'asciutto' && fondoSintesi.classe !== 'ignoto') {
+    const daQuota = Number.isFinite(fondoSintesi.quotaInizioM)
+      ? ` da ${Math.round(fondoSintesi.quotaInizioM)} m`
+      : '';
+    const etichetta = FONDO_CLASSI[fondoSintesi.classe]?.etichetta ?? fondoSintesi.classe;
+    avvisi.push(
+      `Fondo del sentiero: ${etichetta}${daQuota} su ${fondoSintesi.trattiClasse} tratti su ${fondoSintesi.totale} (${fondoSintesi.testoPeggiore})`
+    );
+  }
+  if (fondoSintesi?.valanga) {
+    avvisi.push(
+      'Neve fresca oltre 30 cm su pendii ripidi lungo il percorso: consulta il bollettino valanghe ufficiale. L’app NON calcola il grado di pericolo valanghe.'
+    );
+  }
+  if (fondoSintesi?.ignoti) {
+    avvisi.push(
+      `Stato del fondo non valutabile su ${fondoSintesi.ignoti} tratti: dati dei giorni precedenti incompleti, non è un via libera`
+    );
   }
 
   // 9. Tacche orarie per il profilo (posizione prevista a ogni ora piena)
@@ -1085,6 +1204,10 @@ async function calcolaPrevisione(percorsoIn) {
     margineTramontoMin,
     sosta,
     areeProtette: areeProt,
+    // Stato del fondo: sintesi di percorso + provenienza del dato
+    fondoSintesi,
+    fondoModello: fondoSerie ? fondoModelloNome : null,
+    fondoAttivo,
     unitaVento: imp.unitaVento,
     generatoIl: Date.now(),
   };
@@ -1208,13 +1331,34 @@ async function pianifica() {
 
     const note = [...notePrep, ...etaBase.avvisi, ...noteScelta, ...noteSosta];
     const serveEnsemble = modello.pop === false;
-    const [serieEsito, popEsito, espoEsito] = await Promise.allSettled([
+    const fondoAttivo = imp.fondoAttivo !== false;
+    // Una sola finestra retrospettiva per TUTTI i candidati: parte 120 h
+    // prima della prima partenza possibile e arriva all'ultimo arrivo.
+    // Ogni cella poi legge il proprio istante dentro la stessa serie.
+    const fondoStart = oraApiUtc(
+      new Date(candidati[0].partenzaUtcMs - FONDO.oreNeve * 3600000)
+    );
+    const [serieEsito, popEsito, espoEsito, fondoEsito] = await Promise.allSettled([
       meteoSerie({ campioni, modello, variabili: VARIABILI_PIANIFICATORE, startHour, endHour }),
       serveEnsemble
         ? ensemblePopSerie({ campioni, startHour, endHour })
         : Promise.resolve(null),
-      (async () =>
-        profiliDaQuote(campioni, await quoteDemCached(puntiSondaEsposizione(campioni))))(),
+      (async () => {
+        const quote = await quoteDemCached(puntiSondaEsposizione(campioni));
+        return {
+          profili: profiliDaQuote(campioni, quote),
+          versanti: versantiDaQuote(campioni, quote),
+        };
+      })(),
+      fondoAttivo
+        ? meteoSerie({
+            campioni,
+            modello,
+            variabili: VARIABILI_FONDO,
+            startHour: fondoStart,
+            endHour,
+          })
+        : Promise.resolve(null),
     ]);
     if (mioPercorso !== percorsoCorrente || mia !== richiestaPianifica) return;
 
@@ -1234,9 +1378,20 @@ async function pianifica() {
         'Probabilità di pioggia non disponibile nel pianificatore: canale pioggia sulle sole quantità'
       );
     }
-    const profiliEspo = espoEsito.status === 'fulfilled' ? espoEsito.value : null;
+    const demRes = espoEsito.status === 'fulfilled' ? espoEsito.value : null;
+    const profiliEspo = demRes?.profili ?? null;
+    const versanti = demRes?.versanti ?? null;
     if (!profiliEspo) {
       note.push('Correzione orografica del vento non disponibile: vento come da modello');
+    }
+    const fondoRes = fondoEsito?.status === 'fulfilled' ? fondoEsito.value : null;
+    const serieFondo = fondoRes && fondoRes.copertura >= 0.5 ? fondoRes.perCampione : null;
+    if (fondoAttivo && !serieFondo) {
+      note.push(
+        'Stato del fondo non disponibile nel pianificatore: le celle NON tengono conto di fango, neve o ghiaccio'
+      );
+    } else if (!fondoAttivo) {
+      note.push('Avviso sullo stato del fondo disattivato nelle impostazioni');
     }
 
     const ultimo = percorso.punti[percorso.punti.length - 1];
@@ -1246,6 +1401,8 @@ async function pianifica() {
       campioni,
       serieCampioni: serieRes.perCampione,
       profiliEspo,
+      versanti,
+      serieFondo,
       popSerie,
       orizzonteMs: adessoMs + modello.orizzonteOre * 3600000,
       arrivoLatLon: { lat: ultimo.lat, lon: ultimo.lon },
@@ -1303,6 +1460,7 @@ function render(r) {
       <span class="dato">${durataOre} h ${String(durataMin).padStart(2, '0')}<small>durata con pause</small></span>
     </div>
     ${r.avvisi.length ? `<div class="avvisi">${r.avvisi.map((a) => `<div>⚠ ${escapeHtml(a)}</div>`).join('')}</div>` : ''}
+    ${bloccoFondo(r)}
     ${bloccoAreeProtette(r)}
     <div class="meta-riepilogo">
       Modello ${escapeHtml(r.modello.nome)} (~${r.modello.risoluzioneKm} km)
@@ -1325,6 +1483,49 @@ function render(r) {
   );
   renderTabella($('tabella'), { campioni: r.campioni, unitaVento: r.unitaVento, affGlobalePct: r.affGlobalePct, sosta: r.sosta }, selezionaCampione);
   renderMarcia($('marcia'), r);
+}
+
+// Riquadro dello stato del fondo: che cosa è successo al TERRENO nei
+// giorni prima del passaggio. Sta sopra le aree protette perché cambia
+// la scelta delle calzature e, nei casi peggiori, la decisione di andare.
+// Regola di prudenza: senza dati il riquadro lo DICE, non tace.
+function bloccoFondo(r) {
+  // Risultato salvato prima della funzione: nessun riquadro, nessun
+  // messaggio inventato
+  if (!('fondoSintesi' in r)) return '';
+  if (r.fondoAttivo === false) return '';
+  const s = r.fondoSintesi;
+  if (!s) {
+    return `<div class="fondo-sintesi ignoto">
+      <strong>Fondo del sentiero: non valutabile</strong><br>
+      I dati dei giorni precedenti non sono arrivati. L’assenza dell’avviso non significa sentiero asciutto.
+    </div>`;
+  }
+  const cl = FONDO_CLASSI[s.classe] || FONDO_CLASSI.ignoto;
+  const daQuota = Number.isFinite(s.quotaInizioM)
+    ? ` da ${Math.round(s.quotaInizioM)} m di quota`
+    : '';
+  const tratti =
+    s.classe === 'asciutto'
+      ? 'su tutto il percorso'
+      : `su ${s.trattiClasse} tratti su ${s.totale}${daQuota}`;
+  const dettaglio =
+    s.classe === 'asciutto'
+      ? 'Nessun segnale di pioggia, neve o gelo recenti nei dati del modello.'
+      : escapeHtml(s.testoPeggiore || '');
+  const ignoti = s.ignoti
+    ? `<br><span class="forbice">Stato non valutabile su ${s.ignoti} tratti: dati incompleti, non è un via libera.</span>`
+    : '';
+  const valanga = s.valanga
+    ? '<br><strong>Neve fresca oltre 30 cm su pendii ripidi: consulta il bollettino valanghe ufficiale.</strong>'
+    : '';
+  return `<div class="fondo-sintesi" style="border-left-color:${cl.colore}">
+    <strong style="color:${cl.colore}">Fondo del sentiero: ${cl.icona} ${cl.etichetta}</strong> ${tratti}<br>
+    ${dettaglio}${valanga}${ignoti}
+    <div class="forbice">Finestra retrospettiva: 72 h per il fango, 120 h per la neve, 48 h per il ghiaccio.
+    Fonte ${escapeHtml(r.fondoModello || 'modello primario')} — i giorni passati sono ricostruzione del modello,
+    non misure di pioggia. Non conosce tipo di terreno né copertura boschiva.</div>
+  </div>`;
 }
 
 // Riquadro delle aree protette attraversate, con la regola sui cani
@@ -1375,6 +1576,10 @@ function popupCampione(c) {
       : null,
     Number.isFinite(v.precipitation) && v.precipitation > 0
       ? `pioggia ${v.precipitation.toFixed(1)} mm`
+      : null,
+    // Stato del fondo: una riga secca, il dettaglio sta in tabella
+    c.fondo && c.fondo.classe !== 'asciutto'
+      ? `fondo: ${FONDO_CLASSI[c.fondo.classe]?.etichetta ?? c.fondo.classe}`
       : null,
     descriviWmo(v.weather_code),
   ]

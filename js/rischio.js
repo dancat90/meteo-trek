@@ -91,7 +91,11 @@ export function descriviConvezione(v) {
 // valori: oggetto {nomeVar: valore} del modello primario al passaggio
 // percepitaC: temperatura percepita (può differire da valori se in
 // futuro arriverà l'UTCI)
-export function scoreCanali(valori, percepitaC) {
+// scoreFondo: canale dello stato del terreno (fondo.js), già col suo cap
+// interno — ghiaccio e crosta fino a 3, neve fino a 2, fango ESCLUSO.
+// Il fango resta un avviso a parte: se alzasse il rischio complessivo,
+// ogni gita autunnale col cielo perfetto risulterebbe rischiosa.
+export function scoreCanali(valori, percepitaC, scoreFondo = null) {
   const mm =
     Number.isFinite(valori.precipitation) && valori.precipitation >= SOGLIA_DRIZZLE_MM
       ? valori.precipitation
@@ -123,7 +127,11 @@ export function scoreCanali(valori, percepitaC) {
   const caldoUv = Math.min(2, aSoglie(valori.uv_index, S.uv));
   const caldo = Math.max(caldoTermico, caldoUv);
 
-  return { pioggia, temporale, vento, freddo, caldo };
+  const canali = { pioggia, temporale, vento, freddo, caldo };
+  // Sesto canale solo quando lo stato del fondo è stato davvero calcolato:
+  // un `fondo: 0` su dati assenti farebbe passare «ignoto» per «sicuro»
+  if (Number.isFinite(scoreFondo)) canali.fondo = Math.max(0, Math.min(3, scoreFondo));
+  return canali;
 }
 
 // Fusione: massimo dei canali (il cap sta già dentro i canali)
@@ -139,6 +147,7 @@ export function canaliAttivi(canali) {
     vento: 'raffiche',
     freddo: 'freddo',
     caldo: 'caldo/UV',
+    fondo: 'fondo (neve/ghiaccio)',
   };
   return Object.entries(canali)
     .filter(([, v]) => v > 0)

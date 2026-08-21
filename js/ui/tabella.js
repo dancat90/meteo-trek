@@ -4,7 +4,7 @@
 // Prima colonna sticky, scroll orizzontale sotto i 480 px.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { COLORI_SEVERITA, ETICHETTE_RISCHIO, ESPOSIZIONE } from '../config.js';
+import { COLORI_SEVERITA, ETICHETTE_RISCHIO, ESPOSIZIONE, FONDO_CLASSI } from '../config.js';
 import { intensitaSolare } from '../nuvole.js';
 import { classificaAffidabilitaGlobale } from '../affidabilita.js';
 import { descriviConvezione } from '../rischio.js';
@@ -76,6 +76,26 @@ export function cellaVisibilita(vis) {
   return vis.km < 4 ? `<span class="in-nube">${testo}</span>` : testo;
 }
 
+// Cella dello stato del fondo: icona + etichetta breve, colore fuori
+// dalla scala del rischio meteo (il fondo è il TERRENO, non il cielo).
+// Un risultato salvato prima della funzione non ha il campo: resta «–»,
+// mai un verde «asciutto» inventato.
+export function cellaFondo(f) {
+  if (!f) return '–';
+  const cl = FONDO_CLASSI[f.classe] || FONDO_CLASSI.ignoto;
+  if (f.classe === 'asciutto') {
+    return `<span class="fondo-cella" title="nessun segnale di pioggia, neve o gelo recenti">asciutto</span>`;
+  }
+  if (f.classe === 'ignoto') {
+    return `<span class="fondo-cella" style="color:${cl.colore}" title="${escapeHtml(f.testo || 'dati insufficienti')}">? n/d</span>`;
+  }
+  const quanto =
+    f.classe === 'neve' && Number.isFinite(f.neve?.cm)
+      ? ` ${Math.round(f.neve.cm)} cm`
+      : '';
+  return `<span class="fondo-cella" style="color:${cl.colore}" title="${escapeHtml(f.testo || '')}">${cl.icona} ${cl.etichetta}${quanto}</span>`;
+}
+
 // Pallino della stima copertura Vodafone (OpenCelliD)
 const COLORE_RETE = { probabile: '#2ea043', incerta: '#f2cc60', assente: '#da3633' };
 function cellaRete(rete) {
@@ -115,13 +135,13 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null, 
     <tr>
       <th>km</th><th>ora</th><th>quota</th><th>T</th><th>perc.</th>
       <th>vento<br>${uVento}</th><th>raffiche<br>${uVento}</th><th>umid.</th>
-      <th>sole<br>UV</th><th>nuvole<br>base</th><th>visib.</th><th>pioggia<br>prob.</th><th>mm</th><th>rischio</th><th>rete</th>
+      <th>sole<br>UV</th><th>nuvole<br>base</th><th>visib.</th><th>pioggia<br>prob.</th><th>mm</th><th>fondo</th><th>rischio</th><th>rete</th>
     </tr>`;
 
   // Riga della sosta pranzo: inserita fra i due campioni a cavallo del
   // punto di fermata (colore dedicato, distinto dalla scala del rischio)
   const rigaSosta = sosta
-    ? `<tr class="riga-sosta"><td colspan="15">🍽 Sosta pranzo — ${sosta.durataMin} min al km ${sosta.dKm.toFixed(1)} (${escapeHtml(sosta.oraInizio)}–${escapeHtml(sosta.oraFine)})${sosta.motivo ? ` · ${escapeHtml(sosta.motivo)}` : ''}</td></tr>`
+    ? `<tr class="riga-sosta"><td colspan="16">🍽 Sosta pranzo — ${sosta.durataMin} min al km ${sosta.dKm.toFixed(1)} (${escapeHtml(sosta.oraInizio)}–${escapeHtml(sosta.oraFine)})${sosta.motivo ? ` · ${escapeHtml(sosta.motivo)}` : ''}</td></tr>`
     : '';
   const idxSosta = sosta ? campioni.findIndex((c) => c.dCumKm > sosta.dKm) : -1;
 
@@ -178,10 +198,11 @@ export function renderTabella(el, { campioni, unitaVento, affGlobalePct = null, 
           <td>${cellaVisibilita(c.visibilita)}</td>
           <td>${pop}</td>
           <td>${mm}</td>
+          <td>${cellaFondo(c.fondo)}</td>
           <td>${rischioHtml}</td>
           <td>${cellaRete(c.rete)}</td>
         </tr>
-        <tr class="riga-dettagli" hidden><td colspan="15">${dettagli}</td></tr>`;
+        <tr class="riga-dettagli" hidden><td colspan="16">${dettagli}</td></tr>`;
     })
     .join('');
 
@@ -282,6 +303,14 @@ function righeDettaglio(c, vFmt, uVento) {
   }
   if (Number.isFinite(v.freezing_level_height))
     parti.push(`zero termico ${Math.round(v.freezing_level_height)} m`);
+  if (c.fondo) {
+    // Stato del terreno nei giorni PRIMA del passaggio: la frase completa
+    // la costruisce fondo.js, unica fonte per tabella, CSV e PDF
+    const cl = FONDO_CLASSI[c.fondo.classe] || FONDO_CLASSI.ignoto;
+    parti.push(
+      `<strong style="color:${cl.colore}">fondo: ${cl.etichetta}</strong> — ${escapeHtml(c.fondo.testo || '')}`
+    );
+  }
   if (Number.isFinite(c.precip15Max))
     parti.push(`max 15 min: ${c.precip15Max.toFixed(1)} mm`);
   if (c.canaliAttivi?.length) {

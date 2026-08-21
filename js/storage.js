@@ -56,6 +56,10 @@ const PREDEFINITE = {
   pausaMinOra: 10,     // pause brevi spalmate (minuti per ora di marcia)
   unitaVento: 'kmh',   // 'kmh' | 'ms'
   sogliaDrizzleMm: 0.1,
+  // Avviso sullo stato del fondo (fango/neve/ghiaccio nei giorni prima):
+  // acceso di default. Spegnerlo evita una chiamata di rete in più, utile
+  // con connessione debole o traffico dati contato.
+  fondoAttivo: true,
 };
 
 export function impostazioni() {

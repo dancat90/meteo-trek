@@ -372,6 +372,98 @@ export const VARIABILI_PIANIFICATORE = [
   'terrestrial_radiation',
 ];
 
+// ── Stato del fondo del sentiero (fango, neve, ghiaccio) ─────────────────
+// Avviso retrospettivo: che cosa è successo al TERRENO nei giorni PRIMA
+// del passaggio. Tre fenomeni con tempi di persistenza diversi, quindi tre
+// finestre diverse: la pioggia asciuga in 2-3 giorni, la neve resta al
+// suolo per settimane, il ghiaccio nasce in una notte sola.
+// Tutte le temperature arrivano già alla quota del sentiero (parametro
+// elevation della chiamata): nessuna correzione di gradiente qui.
+
+export const FONDO = {
+  // Finestre retrospettive, in ore prima dell'istante di passaggio
+  orePioggia: 72,
+  oreNeve: 120,
+  oreAcqua: 48, // acqua disponibile sul terreno per il ghiaccio
+  oreGelo: 18, // la notte prima del passaggio
+  oreCicli: 48, // finestra dei cicli gelo-disgelo (crosta dura)
+  oreValanga: 72, // neve fresca rilevante per il rimando al bollettino
+
+  // Pesi di recency della pioggia: [0-24 h, 24-48 h, 48-72 h] prima del
+  // passaggio. Lo stesso peso si applica all'evapotraspirazione, così il
+  // rapporto acqua caduta / acqua evaporata resta corretto in ogni fascia.
+  pesiPioggia: [1, 0.6, 0.3],
+
+  // Bilancio idrico netto pesato (mm): umido / fangoso / saturo
+  sogliePioggiaMm: [5, 15, 40],
+  // Rovescio violento nelle ultime 24 h (mm in una sola ora): incide il
+  // sentiero anche con totale basso
+  rovescioMmOra: 20,
+
+  // Neve residua stimata (cm): sparsa / continua / alta
+  soglieNeveCm: [2, 10, 30],
+  // Fusione a gradi-giorno (metodo classico dell'idrologia nivale):
+  // centimetri di manto fusi per grado sopra zero per giorno. Il valore
+  // tiene conto di una densità media del manto (~150 kg/m³): 4 mm di
+  // acqua equivalente per °C/giorno ≈ 2,7 cm di neve.
+  fusioneCmGradoGiorno: 2.7,
+
+  // Ghiaccio: serve acqua sul terreno E gelo. Un sentiero asciutto a
+  // −5 °C non ha ghiaccio.
+  acquaMinimaMm: 1,
+  // Soglie sul suolo (°C): attenzione a +1, certezza a 0. Il margine di
+  // 1 grado copre l'errore tipico del modello.
+  sogliaGeloC: 1,
+  sogliaGeloCertoC: 0,
+  // Neve minima perché il ciclo gelo-disgelo produca crosta dura (cm)
+  neveCrostaCm: 2,
+
+  // Rimando al bollettino valanghe: neve fresca in 72 h su pendii ripidi
+  valangaNeveCm: 30,
+  valangaPendenzaPct: 58, // ≈ 30 gradi
+
+  // Versante: moltiplicatore della fusione per esposizione solare.
+  // Il nord riceve meno sole, la neve dura molto di più a parità di quota.
+  ampiezzaVersante: 0.4, // nord ×0,6 · sud ×1,4 · est-ovest ×1
+  // Sotto questa pendenza il terreno è pianeggiante: nessuna correzione
+  pendenzaMinVersantePct: 10,
+
+  // Sopra questa quota, in inverno, la neve non è un evento recente ma lo
+  // stato normale della montagna: la stima residua perde significato
+  quotaNeveStabileM: 2500,
+
+  // Copertura minima della finestra retrospettiva perché lo stato valga:
+  // sotto, l'avviso dichiara «dati insufficienti» e NON dice «asciutto»
+  coperturaMinima: 0.6,
+};
+
+// Variabili della chiamata retrospettiva dedicata. Sonda live 08/2026:
+// tutte non-null su ICON-2I, ICON-CH2, ICON-EU e best_match, anche sui
+// giorni passati (start_hour all'indietro accettato da tutti).
+export const VARIABILI_FONDO = [
+  'rain', // pioggia separata dalla neve, già discriminata alla quota
+  'snowfall', // nevicata in cm
+  'snow_depth', // manto al suolo previsto dal modello, in METRI
+  'temperature_2m',
+  'soil_temperature_0cm', // gelo del fondo: il suolo ha inerzia termica
+  'et0_fao_evapotranspiration', // asciugatura del terreno
+];
+
+// Classi dello stato del fondo. Colori fuori dalla scala del rischio
+// meteo (marrone per il fango, azzurro per neve e ghiaccio): il fondo è
+// una condizione del TERRENO, non del cielo, e non deve confondersi coi
+// chip delle 4 classi di rischio.
+export const FONDO_CLASSI = {
+  asciutto: { etichetta: 'asciutto', icona: '', colore: '#2ea043' },
+  umido: { etichetta: 'umido', icona: '💧', colore: '#a3785a' },
+  fangoso: { etichetta: 'fangoso', icona: '💧', colore: '#8b5a2b' },
+  saturo: { etichetta: 'saturo', icona: '💧', colore: '#6b3f1d' },
+  neve: { etichetta: 'neve al suolo', icona: '❄', colore: '#79c0ff' },
+  ghiaccio: { etichetta: 'ghiaccio', icona: '🧊', colore: '#58a6ff' },
+  crosta: { etichetta: 'crosta dura', icona: '🧊', colore: '#1f6feb' },
+  ignoto: { etichetta: 'dati insufficienti', icona: '?', colore: '#8b949e' },
+};
+
 // Correzione UV: +10%/1000 m (OMS/WMO) sul DELTA quota sentiero−cella
 // modello (assunzione dichiarata: l'UV Open-Meteo è alla quota della
 // cella). Neve: l'albedo può aggiungere fino a +80% (OMS), ma "neve al

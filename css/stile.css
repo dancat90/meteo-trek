@@ -275,6 +275,22 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
   white-space: nowrap;
 }
 
+/* ── Stato del fondo (fango, neve, ghiaccio nei giorni precedenti) ── */
+/* Barra colorata a sinistra invece del chip: il fondo è una condizione
+   del terreno e non deve confondersi coi 4 chip del rischio meteo */
+.fondo-sintesi {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--bordo);
+  border-left: 4px solid var(--testo-secondario);
+  border-radius: 10px;
+  background: var(--pannello-alto);
+  font-size: 0.9rem;
+}
+.fondo-sintesi.ignoto { border-left-color: #8b949e; }
+.fondo-sintesi .forbice { display: block; margin-top: 6px; }
+.fondo-cella { white-space: nowrap; font-size: 0.8rem; }
+
 /* ── Aree protette ── */
 .aree-protette {
   margin-top: 10px;
@@ -348,6 +364,15 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .form-impostazioni { display: flex; flex-direction: column; gap: 14px; }
 .form-impostazioni h2 { margin: 0; font-size: 1.1rem; }
 .form-impostazioni small { color: var(--testo-secondario); font-size: 0.78rem; }
+/* Interruttore con etichetta accanto e nota esplicativa sotto */
+.riga-interruttore {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+}
+.riga-interruttore input { width: 18px; height: 18px; }
+.riga-interruttore small { grid-column: 2; }
 .riga-bottoni { display: flex; justify-content: space-between; gap: 10px; }
 .versione { color: var(--testo-secondario); text-align: right; }
 
@@ -395,6 +420,8 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .cella-griglia.attiva.selezionata { outline: 2px solid #2f81f7; outline-offset: 1px; }
 .cella-griglia .tramonto-badge { font-weight: 400; font-size: 0.8rem; }
 .cella-griglia .parziale { font-weight: 400; }
+/* Marcatore neve/ghiaccio: piccolo, non deve rubare la lettura allo score */
+.cella-griglia .fondo-badge { font-weight: 400; font-size: 0.7rem; }
 .legenda-pianificatore { margin-top: 10px; line-height: 1.5; }
 /* :not([hidden]): display flex vincerebbe sull'attributo hidden */
 .dettaglio-pianificatore:not([hidden]) {

@@ -28,6 +28,13 @@ export function initImpostazioni({ bottoneApri, dialogo, onCronologiaSvuotata })
           <option value="ms">m/s</option>
         </select>
       </label>
+      <label class="riga-interruttore">
+        <input type="checkbox" name="fondo">
+        <span>Avvisa sullo stato del fondo (fango, neve, ghiaccio)</span>
+        <small>Guarda che cosa è successo al terreno nei giorni PRIMA della gita:
+        pioggia nelle ultime 72 ore, neve nelle ultime 120, gelo notturno nelle ultime 18.
+        Richiede una chiamata di rete in più: spegnilo se hai poco traffico dati.</small>
+      </label>
       <div class="riga-bottoni">
         <button type="button" name="svuota">Svuota cronologia</button>
         <button value="annulla">Annulla</button>
@@ -43,6 +50,7 @@ export function initImpostazioni({ bottoneApri, dialogo, onCronologiaSvuotata })
     form.elements.passo.value = String(imp.mhSalita);
     form.elements.pause.value = String(imp.pausaMinOra);
     form.elements.vento.value = imp.unitaVento;
+    form.elements.fondo.checked = imp.fondoAttivo !== false;
     dialogo.returnValue = '';
     dialogo.showModal();
   });
@@ -64,6 +72,7 @@ export function initImpostazioni({ bottoneApri, dialogo, onCronologiaSvuotata })
       mhSalita: Number(form.elements.passo.value) || 400,
       pausaMinOra: dentro(form.elements.pause.value, 0, 30, 10),
       unitaVento: form.elements.vento.value === 'ms' ? 'ms' : 'kmh',
+      fondoAttivo: form.elements.fondo.checked,
     });
   });
 }

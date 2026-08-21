@@ -15,7 +15,7 @@
 import { escapeHtml } from './mappa.js';
 import { cellaNuvole } from './tabella.js';
 import { formattaOra } from '../tempo.js';
-import { COLORI_SEVERITA } from '../config.js';
+import { COLORI_SEVERITA, FONDO_CLASSI } from '../config.js';
 import { csvCompleto, nomeFileCsv } from '../export-csv.js';
 
 const TILE_URL = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png';
@@ -133,6 +133,31 @@ const reteDot = (classe) =>
     ? `<span class="chip" style="background:${COLORE_RETE[classe]}" title="Vodafone ${classe}"></span>`
     : '–';
 const reteTesto = (classe) => (classe ? TESTO_RETE[classe] : '–');
+
+// Riquadro dello stato del fondo per il PDF: il documento stampato non
+// contiene il riepilogo, quindi l'avviso deve viaggiare con la tabella.
+// Senza dati il riquadro lo dichiara: un PDF muto sarebbe letto come
+// «sentiero asciutto» proprio quando lo si consulta senza rete.
+export function bloccoFondoPdf(r) {
+  if (!('fondoSintesi' in r) || r.fondoAttivo === false) return '';
+  const s = r.fondoSintesi;
+  if (!s) {
+    return `<p class="fondo">FONDO DEL SENTIERO: non valutabile — dati dei giorni precedenti non disponibili. L'assenza dell'avviso non significa sentiero asciutto.</p>`;
+  }
+  if (s.classe === 'asciutto' && !s.ignoti) {
+    return `<p class="fondo">Fondo del sentiero: asciutto su tutto il percorso. Nessun segnale di pioggia, neve o gelo recenti nei dati del modello.</p>`;
+  }
+  const cl = FONDO_CLASSI[s.classe] || FONDO_CLASSI.ignoto;
+  const daQuota = Number.isFinite(s.quotaInizioM) ? ` da ${Math.round(s.quotaInizioM)} m` : '';
+  const ignoti = s.ignoti ? ` Stato non valutabile su ${s.ignoti} tratti.` : '';
+  const valanga = s.valanga
+    ? ' NEVE FRESCA OLTRE 30 cm SU PENDII RIPIDI: consulta il bollettino valanghe ufficiale.'
+    : '';
+  return `<p class="fondo"><strong>FONDO DEL SENTIERO: ${escapeHtml(cl.etichetta.toUpperCase())}</strong>
+    su ${s.trattiClasse} tratti su ${s.totale}${daQuota}. ${escapeHtml(s.testoPeggiore || '')}.${valanga}${ignoti}
+    <br><small>Finestra: 72 h fango · 120 h neve · 48 h ghiaccio. I giorni passati sono ricostruzione del
+    modello${r.fondoModello ? ` (${escapeHtml(r.fondoModello)})` : ''}, non misure di pioggia.</small></p>`;
+}
 
 function testataTramonto(r) {
   if (!r.tramontoIso) return 'tramonto non calcolabile a questa latitudine';
@@ -493,6 +518,7 @@ function esportaPdf(r, righe, puntiMappa) {
   h1 { font-size: 16px; margin: 0 0 4px; }
   .meta { margin: 0 0 12px; color: #333; }
   .allarme { border: 2px solid #000; padding: 6px 8px; margin: 0 0 12px; font-weight: bold; }
+  .fondo { border: 1px solid #000; border-left: 4px solid #000; padding: 6px 8px; margin: 0 0 12px; }
   .mappa { width: 100%; max-height: 60vh; object-fit: contain; border: 1px solid #999; margin-bottom: 8px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { border: 1px solid #999; padding: 3px 6px; text-align: center; }
@@ -516,6 +542,7 @@ ${
       } (regola: finire almeno 1 ora prima).</p>`
     : ''
 }
+${bloccoFondoPdf(r)}
 ${blocco}
 <table><thead><tr>
   <th>#</th><th>ora</th><th>tempo parz/tot</th><th>km parz/tot</th><th>quota</th>

@@ -17,6 +17,20 @@ import { percepitaOperativa } from './percepita.js';
 import { giornoAnnoUtc } from './radiante.js';
 import { fattoreEsposizione } from './esposizione.js';
 import { albaTramontoPertinenti } from './sole.js';
+import { preparaFondo, statoFondo } from './fondo.js';
+
+// Ordine di gravità delle classi di fondo, per scegliere la peggiore
+// lungo il percorso di una singola cella della griglia
+const GRAVITA_FONDO = {
+  asciutto: 0,
+  ignoto: 0,
+  umido: 1,
+  fangoso: 2,
+  neve: 2,
+  saturo: 3,
+  ghiaccio: 4,
+  crosta: 5,
+};
 
 // "YYYY-MM-DD" del giorno locale nel fuso tz all'istante ms
 function dataIsoLocale(ms, tz) {
@@ -112,12 +126,18 @@ export function valutaFinestre({
   campioni,
   serieCampioni,
   profiliEspo = null,
+  versanti = null,
+  serieFondo = null,
   popSerie = null,
   orizzonteMs,
   arrivoLatLon = null,
   durataTotaleMin,
   margineTramontoMin = PIANIFICATORE.margineTramontoMin,
 }) {
+  // Serie del fondo estratte UNA volta per campione: ogni cella della
+  // griglia le rilegge al proprio istante, senza ricostruirle
+  const fondoPrep = serieFondo ? campioni.map((_, i) => preparaFondo(serieFondo[i])) : null;
+
   return candidati.map((cand) => {
     const partenzaUtcMs = cand.partenzaUtcMs;
     // Override per-candidato (sosta a orario fisso): offset e durata
@@ -142,7 +162,7 @@ export function valutaFinestre({
 
     // Oltre l'orizzonte del modello: nessuno score, niente numeri finti
     if (Number.isFinite(orizzonteMs) && arrivoUtcMs + 3600000 > orizzonteMs) {
-      return { ...cand, arrivoUtcMs, stato: 'oltreOrizzonte', scoreMax: null, distribuzione: null, peggior: null, campioniSenzaDati: campioni.length, tramonto };
+      return { ...cand, arrivoUtcMs, stato: 'oltreOrizzonte', scoreMax: null, distribuzione: null, peggior: null, fondo: null, campioniSenzaDati: campioni.length, tramonto };
     }
 
     let scoreMax = 0;
@@ -150,6 +170,9 @@ export function valutaFinestre({
     let peggior = null;
     let campioniSenzaDati = 0;
     let campioniConBuco = 0;
+    // Fondo peggiore lungo il percorso per QUESTA partenza: ogni giorno
+    // candidato ha la sua storia di pioggia, neve e gelo
+    let fondoPeggiore = null;
     for (let i = 0; i < campioni.length; i++) {
       const istante = partenzaUtcMs + (offs[i] ?? 0) * 60000;
       const estratto = valoriAllOra(serieCampioni?.[i], istante);
@@ -178,7 +201,32 @@ export function valutaFinestre({
         if (pop !== null) valoriRischio = { ...valoriEff, precipitation_probability: pop };
       }
       const oper = percepitaOperativa(valoriEff, giornoAnnoUtc(new Date(istante)));
-      const canali = scoreCanali(valoriRischio, oper.valore);
+      // Stato del fondo alla data del candidato: entra nel rischio solo
+      // per la parte neve/ghiaccio (cap dentro scoreRischio)
+      const fondo = fondoPrep
+        ? statoFondo(fondoPrep[i], {
+            istanteMs: istante,
+            quotaM: campioni[i].eleM,
+            versante: versanti?.[i] ?? null,
+          })
+        : null;
+      if (fondo && fondo.dati !== 'assenti') {
+        const g = GRAVITA_FONDO[fondo.classe] ?? 0;
+        if (!fondoPeggiore || g > (GRAVITA_FONDO[fondoPeggiore.classe] ?? 0)) {
+          fondoPeggiore = {
+            classe: fondo.classe,
+            livello: fondo.livello,
+            idxCampione: i,
+            dCumKm: campioni[i].dCumKm,
+            testo: fondo.testo,
+          };
+        }
+      }
+      const canali = scoreCanali(
+        valoriRischio,
+        oper.valore,
+        fondo && fondo.dati !== 'assenti' ? fondo.scoreRischio : null
+      );
       const score = fusione(canali);
       distribuzione[score]++;
       if (score >= scoreMax) {
@@ -209,6 +257,7 @@ export function valutaFinestre({
       scoreMax: stato === 'senzaDati' ? null : scoreMax,
       distribuzione: stato === 'senzaDati' ? null : distribuzione,
       peggior: stato === 'senzaDati' ? null : peggior,
+      fondo: stato === 'senzaDati' ? null : fondoPeggiore,
       campioniSenzaDati,
       tramonto,
     };

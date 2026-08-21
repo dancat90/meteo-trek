@@ -7,7 +7,7 @@
 // Modulo puro: nessun accesso al DOM, importabile da Node per i test.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { ETICHETTE_RISCHIO } from './config.js';
+import { ETICHETTE_RISCHIO, FONDO_CLASSI } from './config.js';
 import { formattaOra, formattaDataOra } from './tempo.js';
 
 // "YYYY-MM-DD" del giorno LOCALE nel fuso del percorso (mai lo slice
@@ -56,6 +56,10 @@ export function csvCampioni(r) {
     'visibilita km', 'prob. pioggia %', 'pioggia mm', 'neve cm',
     'rischio', 'canali', 'UV grezzo', 'UV corretto quota/neve',
     'CAPE J/kg', 'LI', 'CIN J/kg', 'LPI J/kg',
+    // Stato del fondo: classe e le tre grandezze che la producono, in
+    // colonne separate (Excel deve poterle mediare e ordinare)
+    'fondo', 'bilancio idrico mm 72h', 'neve al suolo cm', 'ghiaccio',
+    'acqua sul terreno mm 48h', 'cicli gelo-disgelo 48h', 'versante',
   ];
   let out = 'TRATTI\r\n' + rigaCsv(testata);
   for (const c of r.campioni || []) {
@@ -89,6 +93,15 @@ export function csvCampioni(r) {
       numeroIt(c.convezione?.li, 1),
       numeroIt(c.convezione?.cin, 0),
       numeroIt(c.convezione?.lpi, 1),
+      c.fondo ? (FONDO_CLASSI[c.fondo.classe]?.etichetta ?? c.fondo.classe) : '',
+      numeroIt(c.fondo?.fango?.mmNetti, 1),
+      numeroIt(c.fondo?.neve?.cm, 1),
+      c.fondo?.ghiaccio?.esito && c.fondo.ghiaccio.esito !== 'no'
+        ? c.fondo.ghiaccio.esito
+        : '',
+      numeroIt(c.fondo?.ghiaccio?.acquaMm, 1),
+      Number.isFinite(c.fondo?.ghiaccio?.cicli) ? String(c.fondo.ghiaccio.cicli) : '',
+      c.fondo?.versante?.nome ?? '',
     ]);
   }
   return out;
@@ -119,6 +132,17 @@ export function csvCompleto(r) {
         : formattaDataOra(new Date(r.arrivoIso), r.tz),
     ]) +
     rigaCsv(['modello', r.modello?.nome ?? '']) +
+    // Stato del fondo: sintesi di percorso e fonte del dato retrospettivo
+    (r.fondoSintesi
+      ? rigaCsv([
+          'fondo del sentiero',
+          `${FONDO_CLASSI[r.fondoSintesi.classe]?.etichetta ?? r.fondoSintesi.classe} su ${r.fondoSintesi.trattiClasse}/${r.fondoSintesi.totale} tratti${
+            Number.isFinite(r.fondoSintesi.quotaInizioM)
+              ? ` da ${Math.round(r.fondoSintesi.quotaInizioM)} m`
+              : ''
+          }${r.fondoModello ? ` — fonte ${r.fondoModello}` : ''}`,
+        ])
+      : '') +
     // Sosta pranzo (null-safe sui risultati salvati senza il campo)
     (r.sosta
       ? rigaCsv([
