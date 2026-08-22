@@ -470,3 +470,48 @@ export const FONDO_CLASSI = {
 // suolo" non è ricavabile dai dati → +25% prudente, applicato SOLO con
 // nevicata prevista al passaggio; i nevai preesistenti non sono rilevati
 export const UV_CORREZIONE = { pctPer1000m: 10, fattoreNeve: 1.25, clampFattore: [0.7, 1.6] };
+
+// ── Taratura dell'altimetro barometrico al parcheggio ────────────────────
+// L'escursionista tara l'orologio al parcheggio: quota dal DEM (la quota
+// GPS del browser è ellissoidica WGS84, in Italia ~45-50 m sopra il
+// livello del mare: inutilizzabile), pressione prevista alla partenza al
+// livello del mare (QNH) e alla quota del parcheggio (QFE), deriva attesa
+// della lettura fra partenza e arrivo. Le costanti fisiche (g, R, M)
+// stanno in js/parcheggio.js come SIGMA in radiante.js. Unità per
+// l'utente: millibar (1 hPa = 1 mbar, nessuna conversione).
+
+export const ALTIMETRO = {
+  // Oltre questa distanza fra parcheggio e primo punto del percorso le
+  // coordinate sono sospette (lat/lon invertite, decimale sbagliato): un
+  // parcheggio legittimo «a valle» di rado supera i 2 km dall'attacco
+  distanzaAttaccoAvvisoM: 2000,
+  // Classi della deriva (m, valore assoluto). 15 m ≈ 1,5 mbar è
+  // l'accuratezza tipica di un altimetro da polso appena tarato: sotto,
+  // la deriva si confonde col rumore dello strumento. 30 m supera
+  // l'equidistanza delle carte escursionistiche 1:25.000 (25 m): una
+  // curva di livello intera, l'errore con cui si sbaglia bivio quotato
+  derivaModerataM: 15,
+  derivaForteM: 30,
+  // Gradiente termico verticale standard (K/m): temperatura media dello
+  // strato mare→parcheggio nella formula ipsometrica
+  gradienteTermicoKPerM: 0.0065,
+  // Sotto questa variazione di QNH (mbar) fra partenza e arrivo la
+  // tendenza si dichiara «stazionaria»
+  qnhStazionariaHpa: 0.05,
+  // Scarto (mbar) fra la QNH reale e quella che l'orologio ricostruisce
+  // con l'atmosfera standard oltre il quale la riga lo spiega: a 2000 m in
+  // estate arriva a 8-10 mbar, e l'utente non deve «correggere» la quota
+  scartoQnhStandardHpa: 3,
+  // Precisione GPS (m) oltre la quale la posizione del telefono va
+  // ricontrollata prima di usarla come parcheggio
+  precisioneGpsAvvisoM: 100,
+};
+
+// Variabili della chiamata dedicata al parcheggio (un solo punto, con
+// `elevation` = quota DEM del parcheggio). Sonda live 22/08/2026: tutte
+// non-null (48/48) su ICON-2I, ICON-CH2, ICON-D2 e best_match.
+export const VARIABILI_PARCHEGGIO = [
+  'pressure_msl', // QNH: NON dipende dalla quota inviata
+  'surface_pressure', // QFE: SEGUE il parametro elevation (2133 m → 793,4; cella 1934 m → 812,4)
+  'temperature_2m', // alla quota inviata: temperatura dello strato per ipsometrica e deriva
+];

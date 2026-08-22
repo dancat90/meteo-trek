@@ -81,9 +81,12 @@ export function ultimoRisultatoScrivi(risultato) {
 }
 
 // ── Cronologia percorsi (più recente prima, max 6) ───────────────────────
-// Voce: { id, fonte ('komoot'|'outdooractive'|'gpx'), nome, km, payload }
+// Voce: { id, fonte ('komoot'|'outdooractive'|'gpx'), nome, km, payload,
+//         parcheggio? }
 // payload: komoot → { tourId }, outdooractive → { url },
 // gpx → { punti } decimati (il file non è ri-scaricabile).
+// parcheggio (opzionale): { lat, lon, quotaM|null } del parcheggio
+// agganciato al percorso per la taratura dell'altimetro.
 
 const MAX_CRONOLOGIA = 6;
 
@@ -91,11 +94,51 @@ export function cronologiaLeggi() {
   return leggi('mt:cronologia', []);
 }
 
+// Aggiunge o aggiorna una voce e RESTITUISCE la voce salvata (null se la
+// voce non ha id). MERGE: se la voce già presente con lo stesso id ha un
+// parcheggio e la nuova non dichiara la chiave (undefined), il parcheggio
+// si conserva — una riapertura da Komoot/Outdooractive ricostruisce la
+// voce da zero e non deve cancellarlo. `parcheggio: null` esplicito lo
+// rimuove.
 export function cronologiaAggiungi(voce) {
-  if (!voce || !voce.id) return;
+  if (!voce || !voce.id) return null;
+  const tutte = cronologiaLeggi();
+  const esistente = tutte.find((v) => v.id === voce.id);
+  const finale = { ...voce };
+  if (finale.parcheggio === undefined && esistente?.parcheggio) {
+    finale.parcheggio = esistente.parcheggio;
+  }
+  if (finale.parcheggio === null || finale.parcheggio === undefined) delete finale.parcheggio;
   // Una voce già presente risale in cima aggiornata, senza duplicarsi
-  const rimanenti = cronologiaLeggi().filter((v) => v.id !== voce.id);
-  scrivi('mt:cronologia', [voce, ...rimanenti].slice(0, MAX_CRONOLOGIA));
+  const rimanenti = tutte.filter((v) => v.id !== voce.id);
+  scrivi('mt:cronologia', [finale, ...rimanenti].slice(0, MAX_CRONOLOGIA));
+  return finale;
+}
+
+// Aggiorna (o rimuove, con null) il parcheggio della voce con quell'id
+// SENZA cambiarne la posizione. Salva solo { lat, lon, quotaM } sanificati.
+// Restituisce la voce aggiornata, null se l'id non c'è o lat/lon non sono
+// numeri.
+export function cronologiaAggiornaParcheggio(id, parcheggio) {
+  const tutte = cronologiaLeggi();
+  const i = tutte.findIndex((v) => v.id === id);
+  if (i < 0) return null;
+  if (parcheggio === null) {
+    const { parcheggio: _via, ...senza } = tutte[i];
+    tutte[i] = senza;
+  } else {
+    if (!Number.isFinite(parcheggio?.lat) || !Number.isFinite(parcheggio?.lon)) return null;
+    tutte[i] = {
+      ...tutte[i],
+      parcheggio: {
+        lat: parcheggio.lat,
+        lon: parcheggio.lon,
+        quotaM: Number.isFinite(parcheggio.quotaM) ? parcheggio.quotaM : null,
+      },
+    };
+  }
+  scrivi('mt:cronologia', tutte);
+  return tutte[i];
 }
 
 export function cronologiaRimuovi(id) {

@@ -61,6 +61,20 @@
 
       <div id="percorso-caricato" class="pannello" hidden></div>
 
+      <div id="parcheggio" class="pannello" hidden>
+        <label>Parcheggio all'attacco del sentiero (coordinate decimali, per tarare l'altimetro)
+          <input id="campo-parcheggio" type="text" spellcheck="false" autocapitalize="off"
+                 placeholder="es. 42.4428, 13.5582">
+        </label>
+        <div class="riga-azioni">
+          <button id="bottone-posizione" type="button">Usa la mia posizione</button>
+          <button id="bottone-parcheggio" type="button">Quota e pressione</button>
+        </div>
+        <div id="parcheggio-esito" hidden></div>
+        <p class="nota">Quota dal modello del terreno (90 m) e pressione prevista in millibar all'ora di
+          partenza: al parcheggio tara l'altimetro sulla <strong>quota</strong>, la pressione serve da riscontro.</p>
+      </div>
+
       <div class="griglia-form">
         <label>Data
           <input id="campo-data" type="date" required>

@@ -150,6 +150,23 @@ export function csvCompleto(r) {
           `${r.sosta.durataMin} min al km ${numeroIt(r.sosta.dKm, 1)} (${r.sosta.oraInizio}–${r.sosta.oraFine})${r.sosta.motivo ? ', ' + r.sosta.motivo : ''}`,
         ])
       : '') +
+    // Parcheggio (taratura altimetro, pressioni in mbar): assente sui
+    // risultati senza parcheggio. Lat e lon in due righe separate (la
+    // virgola decimale italiana renderebbe ambigua la coppia in una cella)
+    (r.parcheggio
+      ? rigaCsv(['parcheggio lat', numeroIt(r.parcheggio.lat, 5)]) +
+        rigaCsv(['parcheggio lon', numeroIt(r.parcheggio.lon, 5)]) +
+        rigaCsv(['quota parcheggio m', numeroIt(r.parcheggio.quotaM, 0)]) +
+        rigaCsv(['QNH prevista mbar', numeroIt(r.parcheggio.partenza?.qnhHpa, 1)]) +
+        // Terza cella: la QFE può essere una stima ipsometrica dalla QNH
+        // (surface_pressure assente), va dichiarato anche fuori dall'app
+        rigaCsv([
+          'QFE parcheggio mbar',
+          numeroIt(r.parcheggio.partenza?.qfeHpa, 1),
+          r.parcheggio.partenza?.qfeStimata ? 'stimata dalla QNH' : '',
+        ]) +
+        rigaCsv(['deriva altimetro m', numeroIt(r.parcheggio.derivaM, 0)])
+      : '') +
     rigaCsv(['generato il', formattaDataOra(new Date(r.generatoIl), r.tz)]);
   return '\uFEFF' + meta + '\r\n' + csvCampioni(r) + '\r\n' + csvAvvisi(r);
 }

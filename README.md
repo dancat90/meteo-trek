@@ -36,6 +36,14 @@ App: https://dancat90.github.io/meteo-trek/
    Il pianificatore usa il solo modello primario dell'area (celle grigie
    oltre il suo orizzonte) e resta indicativo: la previsione completa è
    il riferimento.
+5. Facoltativo, per chi ha l'orologio con altimetro barometrico: incolla
+   le coordinate decimali del parcheggio all'attacco del sentiero (o
+   prendile dal GPS del telefono se sei già lì) e premi «Quota e
+   pressione»: quota del parcheggio dal modello del terreno, pressione
+   prevista alla partenza in millibar (QNH e alla quota) e deriva attesa
+   dello strumento fino all'arrivo. Il parcheggio resta agganciato al
+   percorso nei recenti e finisce nel riepilogo, nel PDF, nel CSV e sulla
+   mappa.
 
 L'ultima previsione resta consultabile offline (bottone «Ultimo
 risultato»): utile sul sentiero senza campo.
@@ -111,6 +119,54 @@ topografica vera, composta dai tile OpenTopoMap (CORS aperto); se i
 tile non arrivano, ripiego dichiarato sulla sola traccia. Calcolo del
 tramonto sul punto di arrivo: se l'arrivo previsto è a meno di 1 ora
 dal tramonto scatta l'avviso.
+
+## Taratura dell'altimetro al parcheggio
+
+Chi cammina con un altimetro barometrico lo tara prima di partire. Dalle
+coordinate del parcheggio l'app calcola (pressioni in millibar, 1 mbar =
+1 hPa):
+
+- la **quota del parcheggio** dal modello del terreno Copernicus GLO-90
+  (Elevation API di Open-Meteo, la stessa fonte delle quote mancanti dei
+  GPX), sul punto esatto e non dalla cache per cella;
+- la **pressione prevista all'ora di partenza** al livello del mare
+  (QNH, `pressure_msl`) e alla quota del parcheggio (QFE,
+  `surface_pressure` chiesta al modello con `elevation` = quota DEM: il
+  modello la riporta a quella quota, verificato il 22/08/2026 — a Campo
+  Imperatore 2133 m → 793,4 mbar con QNH 1018,7), più la temperatura;
+- la **deriva attesa dell'altimetro** fra partenza e arrivo: la pressione
+  alla quota del parcheggio cambia durante la gita (fronte in arrivo, ma
+  anche il semplice riscaldamento diurno della colonna d'aria, ~3 mbar
+  fra notte e mezzogiorno a 2000 m) e lo strumento la legge come
+  dislivello, Δh ≈ −(R·T/g)·(ΔP/P): 8 m per mbar al mare, 10-11 m per
+  mbar a 2000 m. Segno positivo = all'arrivo segna più del vero. Sotto
+  15 m è trascurabile (accuratezza dello strumento), oltre 30 m (più di
+  una curva di livello delle carte 1:25.000) l'app consiglia di
+  ricalibrare su una quota nota lungo il percorso. Modello: lo stesso
+  della traccia (ICON-2I sull'Appennino), ripiego dichiarato sul best
+  match.
+
+**Tara sulla quota, usa la QNH solo come controllo.** La QNH prevista ha
+un errore di ±1-2 mbar (≈ ±10-20 m) e l'orologio converte pressione in
+quota con l'atmosfera standard (15 °C al mare, −6,5 °C/km): tarato sulla
+QNH sbaglia del 3,5 % del dislivello ogni 10 °C di scarto dalla standard
+(a Campo Imperatore in estate ~75 m). Per lo stesso motivo, una volta
+tarato sulla quota, l'orologio mostra come «pressione al mare» un valore
+diverso dalla QNH reale (a 2133 m con 11,5 °C: ~1028 mbar contro 1018,7):
+l'app lo dichiara riga per riga, **non correggere la quota per far
+tornare la QNH**. Il controllo onesto è la pressione assoluta letta dal
+barometro, che deve stare entro 1-2 mbar dalla QFE prevista.
+
+Il GPS del telefono serve solo a riempire le coordinate quando si è già
+sul posto («Usa la mia posizione»): la sua quota NON va usata
+(ellissoidica WGS84, in Italia ~45-50 m sopra il livello del mare).
+
+Limiti dichiarati: il DEM a 90 m su un pendio può scostarsi di ±10 m
+dalla quota del piazzale (se un cartello riporta la quota, vale il
+cartello); la deriva è stimata alla quota del parcheggio con la
+temperatura prevista, in vetta può differire; la pressione locale può
+scostarsi di 1-2 mbar dal modello a ~2 km. Ogni dato mancante è
+dichiarato, mai sostituito da un numero.
 
 ## Copertura Vodafone (stima)
 
@@ -200,6 +256,8 @@ windchill e rischio usano comunque l'efficace.
 - Test della logica pura: `node tools/test_logica.mjs`
 - Validazione UTCI contro pythermalcomfort: `node tools/valida_utci.mjs`
 - Smoke test di rete: `node tools/smoke_meteo.mjs`
+- Smoke dell'altimetro al parcheggio (DEM + pressione ICON-2I alla quota):
+  `node tools/smoke_parcheggio.mjs`
 - Icone: `python tools/genera_icone.py`
 - Deploy: GitHub Pages dal branch `main`. **A ogni deploy bumpare la
   costante `CACHE` in `sw.js`.**

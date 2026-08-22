@@ -302,6 +302,38 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
 }
 .area-protetta { margin-top: 6px; }
 
+/* ── Parcheggio: taratura dell'altimetro barometrico ──
+   Stesso riquadro nel form (esito inline) e nel riepilogo. Barra laterale
+   azzurro accento: è un dato di servizio, fuori dalla scala del rischio;
+   diventa gialla se il risultato porta avvisi (dato mancante o deriva) */
+.parcheggio-sintesi {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--bordo);
+  border-left: 4px solid var(--accento);
+  border-radius: 10px;
+  background: var(--pannello-alto);
+  font-size: 0.9rem;
+}
+.parcheggio-sintesi.con-avvisi { border-left-color: var(--avviso); }
+.parcheggio-sintesi .coordinate { color: var(--testo-secondario); font-size: 0.8rem; margin-left: 6px; }
+/* Righe etichetta/valore: dl a due colonne, numeri allineati */
+.parcheggio-righe {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 14px;
+  margin: 8px 0 0;
+}
+@media (max-width: 560px) {
+  .parcheggio-righe { grid-template-columns: 1fr; gap: 1px 0; }
+  .parcheggio-righe dd { margin-bottom: 5px; }
+}
+.parcheggio-righe dt { color: var(--testo-secondario); }
+.parcheggio-righe dd { margin: 0; font-variant-numeric: tabular-nums; }
+.parcheggio-sintesi .avvisi { margin-top: 8px; }
+.parcheggio-sintesi .forbice { display: block; margin-top: 6px; }
+#parcheggio .riga-azioni { margin-top: 8px; }
+
 /* ── Tabella di marcia ── */
 .marcia { margin-top: 16px; }
 .marcia-testata {
@@ -348,6 +380,23 @@ table.tratti { border-collapse: collapse; width: 100%; min-width: 720px; font-si
 .pin-controllo.selezionato {
   background: #2f81f7;
   transform: translate(-50%, -50%) scale(1.2);
+}
+/* Pin «P» del parcheggio sulla mappa principale (stessa meccanica di
+   centraggio dei pin numerati: .pin-wrap + translate -50%/-50%) */
+.pin-parcheggio {
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--accento);
+  color: #0d1117;
+  border: 2px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
 }
 
 /* ── Impostazioni ── */

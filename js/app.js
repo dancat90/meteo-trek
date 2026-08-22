@@ -7,7 +7,7 @@
 // di un percorso abbandonato.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE, AVVISO_TEMPORALE, PIANIFICATORE, VARIABILI_PIANIFICATORE, VARIABILI_FONDO, FONDO, FONDO_CLASSI } from './config.js';
+import { VARIABILI_PRIMARIO, VARIABILI_SECONDARIO, VARIABILI_CONFRONTO, PASSI, SOGLIA_DELTA_QUOTA_M, MODELLI, ESPOSIZIONE, AVVISO_TEMPORALE, PIANIFICATORE, VARIABILI_PIANIFICATORE, VARIABILI_FONDO, FONDO, FONDO_CLASSI, ALTIMETRO, VARIABILI_PARCHEGGIO } from './config.js';
 import * as storage from './storage.js';
 import { dataLocaleAUtc, formattaOra, formattaDataOra, oraApiUtc, risolviOrarioSosta } from './tempo.js';
 import { campionaTraccia, bboxPunti } from './geo.js';
@@ -19,6 +19,7 @@ import { quoteDemCached } from './api/dem.js';
 import { puntiSondaEsposizione, profiliDaQuote, fattoreEsposizione } from './esposizione.js';
 import { versantiDaQuote } from './versante.js';
 import { preparaFondo, statoFondo, sintesiFondo } from './fondo.js';
+import { parseCoordinate, distanzaAttaccoM, pressioneAllIstante, valutaParcheggio } from './parcheggio.js';
 import { fascia, classeDispersione } from './dispersione.js';
 import { ensemblePrecipitazione, ensemblePopSerie } from './api/ensemble.js';
 import { candidatiPartenza, valutaFinestre } from './pianificatore.js';
@@ -37,7 +38,7 @@ import { renderMarcia } from './ui/marcia.js';
 import { scoreCanali, fusione, canaliAttivi } from './rischio.js';
 import { correggiUv, classificaUv } from './uv.js';
 import { affidabilita, etichettaAffidabilita, affidabilitaGlobale } from './affidabilita.js';
-import { initMappa, disegnaTraccia, evidenziaCampione, pulisciTraccia, escapeHtml } from './ui/mappa.js';
+import { initMappa, disegnaTraccia, evidenziaCampione, pulisciTraccia, escapeHtml, mostraParcheggio } from './ui/mappa.js';
 import { renderProfilo, evidenziaProfilo } from './ui/profilo.js';
 import { renderTabella, evidenziaRiga, descriviWmo } from './ui/tabella.js';
 import { initImpostazioni } from './ui/impostazioni.js';
@@ -46,6 +47,10 @@ const $ = (id) => document.getElementById(id);
 
 let percorsoCorrente = null;
 let epocaCorrente = 0;
+// Parcheggio del percorso corrente (taratura altimetro): coordinate (più
+// quota DEM appena nota) e id della voce di cronologia a cui agganciarle
+let parcheggioCorrente = null; // { lat, lon, quotaM|null } | null
+let voceCorrenteId = null;
 
 // ── Messaggi ────────────────────────────────────────────────────────────
 
@@ -78,6 +83,7 @@ function caricamento(attivo) {
   $('caricamento').hidden = operazioniAttive === 0;
   $('bottone-prevedi').disabled = operazioniAttive > 0 || !percorsoCorrente;
   $('bottone-pianifica').disabled = operazioniAttive > 0 || !percorsoCorrente;
+  $('bottone-parcheggio').disabled = operazioniAttive > 0 || !percorsoCorrente;
 }
 
 // Contatore delle richieste di ingestione: su caricamenti sovrapposti
@@ -107,10 +113,40 @@ function impostaPercorso(percorso, vocaCronologia = null) {
   box.hidden = false;
   $('bottone-prevedi').disabled = operazioniAttive > 0;
   $('bottone-pianifica').disabled = operazioniAttive > 0;
+  // Parcheggio agganciato alla voce di cronologia: il merge di
+  // cronologiaAggiungi conserva quello già salvato per lo stesso id e
+  // restituisce la voce fusa (unica fonte di verità: lo storage)
+  let voceSalvata = null;
   if (vocaCronologia) {
-    storage.cronologiaAggiungi(vocaCronologia);
+    voceSalvata = storage.cronologiaAggiungi(vocaCronologia) ?? null;
     renderCronologia();
   }
+  voceCorrenteId = voceSalvata?.id ?? null;
+  impostaParcheggio(voceSalvata?.parcheggio ?? null);
+}
+
+// Box del parcheggio per il percorso appena caricato: input ed esito
+// azzerati (mai numeri di un percorso precedente), coordinate precompilate
+// se la voce di cronologia le ricorda
+function impostaParcheggio(p) {
+  parcheggioCorrente =
+    p && Number.isFinite(p.lat) && Number.isFinite(p.lon)
+      ? { lat: p.lat, lon: p.lon, quotaM: Number.isFinite(p.quotaM) ? p.quotaM : null }
+      : null;
+  $('campo-parcheggio').value = parcheggioCorrente ? testoCoordinate(parcheggioCorrente) : '';
+  pulisciEsitoParcheggio();
+  $('parcheggio').hidden = false;
+  $('bottone-parcheggio').disabled = operazioniAttive > 0;
+}
+
+// Esito inline del parcheggio: va tolto ogni volta che smette di
+// descrivere quello che dice il campo (coordinate cambiate o tolte,
+// percorso nuovo). Stessa regola di pulisciRisultato: mai numeri vecchi
+// sotto etichette nuove.
+function pulisciEsitoParcheggio() {
+  const esito = $('parcheggio-esito');
+  esito.innerHTML = '';
+  esito.hidden = true;
 }
 
 // Traccia ridotta per mappa, profilo e storage offline (≤ 500 punti)
@@ -271,7 +307,12 @@ function renderCronologia() {
         else if (v.fonte === 'outdooractive') await caricaOa(v.payload.url);
         else {
           const percorso = costruisciPercorso({ nome: v.nome, fonte: 'gpx', punti: v.payload.punti });
-          if (mia === richiestaIngest) impostaPercorso(percorso);
+          // Voce ripassata SENZA la chiave parcheggio: il merge di
+          // cronologiaAggiungi conserva quello salvato (anche se aggiornato
+          // dopo questo render) e la voce risale in cima come per Komoot
+          if (mia === richiestaIngest) {
+            impostaPercorso(percorso, { id: v.id, fonte: 'gpx', nome: v.nome, km: v.km, payload: v.payload });
+          }
         }
       } catch (e) {
         mostraMessaggio('errore', e.message);
@@ -305,11 +346,32 @@ async function prevedi() {
   pulisciMessaggi();
   pulisciRisultato();
   const epoca = ++epocaCorrente;
+  // Parcheggio: vale l'input (anche senza aver premuto «Quota e pressione»);
+  // input non valido → avviso, la previsione parte comunque senza parcheggio;
+  // input svuotato → parcheggio tolto dal percorso
+  const testoParch = $('campo-parcheggio').value.trim();
+  const parch = testoParch ? parseCoordinate(testoParch) : null;
+  if (testoParch && !parch) {
+    mostraMessaggio('avviso', 'Coordinate del parcheggio non riconosciute: previsione senza riquadro parcheggio');
+    // Il riquadro inline non descrive più il testo del campo
+    pulisciEsitoParcheggio();
+  } else {
+    aggiornaParcheggioCorrente(parch);
+  }
+  // Un «Quota e pressione» in volo va abbandonato: Prevedi ricalcola il
+  // parcheggio nel proprio ramo, e l'ultimo click dell'utente è questo.
+  // Il token serve anche al ritorno: se nel frattempo parte un nuovo
+  // «Quota e pressione», questa previsione non ne sovrascrive l'esito.
+  const miaParch = ++richiestaParcheggio;
   caricamento(true);
   try {
-    const risultato = await calcolaPrevisione(percorsoCorrente);
+    const risultato = await calcolaPrevisione(percorsoCorrente, { parcheggio: parch });
     if (epoca !== epocaCorrente) return; // percorso cambiato nel frattempo
     render(risultato);
+    if (risultato.parcheggio && miaParch === richiestaParcheggio) {
+      salvaQuotaParcheggio(risultato.parcheggio);
+      mostraEsitoParcheggio(risultato.parcheggio);
+    }
     // Salvataggio offline verificato col read-back: un fallimento
     // silenzioso (quota localStorage) lascerebbe il bottone su una
     // gita vecchia sbagliata
@@ -411,7 +473,12 @@ function risolviSosta(sostaForm, { percorso, partenzaUtcMs, dataIso, tz, avvisi 
   return { modo: 'dopoOre', motivo: '', perEta: { durataMin, dopoOre: sostaForm.dopoOre } };
 }
 
-async function calcolaPrevisione(percorsoIn) {
+// Contesto comune a «Prevedi» e a «Quota e pressione» del parcheggio:
+// quote e fuso, partenza dal form, ETA e arrivo, scelta dei modelli e
+// finestra API. Corpo spostato TALE E QUALE dall'inizio di
+// calcolaPrevisione: le eccezioni (data mancante, partenza nel passato,
+// oltre 15 giorni, nessun modello) sono messaggi utente in entrambi i flussi.
+async function contestoPartenza(percorsoIn) {
   const imp = storage.impostazioni();
   const avvisi = [];
   const { percorso, tz } = await preparaPercorsoETz(percorsoIn, avvisi);
@@ -469,6 +536,46 @@ async function calcolaPrevisione(percorsoIn) {
     endHour = `${new Date(limiteApiMs).toISOString().slice(0, 10)}T23:00`;
   }
   const finestra = { startHour, endHour };
+  return {
+    imp,
+    avvisi,
+    percorso,
+    tz,
+    partenzaUtc,
+    mhSalita,
+    sostaRisolta,
+    eta,
+    campioni,
+    orari,
+    arrivo,
+    bbox,
+    leadOreMax,
+    scelta,
+    quindici,
+    finestra,
+  };
+}
+
+async function calcolaPrevisione(percorsoIn, { parcheggio: parcheggioIn = null } = {}) {
+  const {
+    imp,
+    avvisi,
+    percorso,
+    tz,
+    partenzaUtc,
+    mhSalita,
+    sostaRisolta,
+    eta,
+    campioni,
+    orari,
+    arrivo,
+    bbox,
+    leadOreMax,
+    scelta,
+    quindici,
+    finestra,
+  } = await contestoPartenza(percorsoIn);
+  const { endHour } = finestra;
 
   // Finestra retrospettiva dello stato del fondo: dalle 120 h prima del
   // primo passaggio fino all'arrivo. Chiamata SEPARATA e leggera (6
@@ -489,7 +596,7 @@ async function calcolaPrevisione(percorsoIn) {
       quindici: quindici && modello.id === 'icon_d2',
     });
 
-  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito, espoEsito, celleUvEsito, fondoEsito] = await Promise.allSettled([
+  const [primEsito, secEsito, ensEsito, celleEsito, confEsito, copEsito, areeEsito, espoEsito, celleUvEsito, fondoEsito, parchEsito] = await Promise.allSettled([
     chiamata(scelta.primario, VARIABILI_PRIMARIO),
     scelta.secondario
       ? chiamata(scelta.secondario, VARIABILI_SECONDARIO)
@@ -541,6 +648,22 @@ async function calcolaPrevisione(percorsoIn) {
           endHour,
         })
       : Promise.resolve(null),
+    // Parcheggio (taratura altimetro): quota DEM + pressioni col modello
+    // della traccia, ripiego interno dichiarato sul modello globale.
+    // calcolaParcheggio non lancia mai.
+    parcheggioIn
+      ? calcolaParcheggio({
+          lat: parcheggioIn.lat,
+          lon: parcheggioIn.lon,
+          percorso,
+          partenzaUtc,
+          arrivoUtc: arrivo,
+          modello: scelta.primario,
+          tz,
+          finestra,
+          quotaNotaM: quotaNotaPer(parcheggioIn),
+        })
+      : Promise.resolve(null),
   ]);
 
   // 7. Degradazioni esplicite, mai silenziose
@@ -573,6 +696,15 @@ async function calcolaPrevisione(percorsoIn) {
   if (scelta.secondario && !sec) {
     avvisi.push('Secondo modello non disponibile: affidabilità senza confronto fra modelli');
   }
+
+  // Parcheggio: gli avvisi del riquadro finiscono anche nel registro ⚠
+  // (stesso doppio binario del fondo: riquadro + avvisi)
+  const parcheggio = parchEsito.status === 'fulfilled' ? parchEsito.value : null;
+  if (parcheggioIn && !parcheggio) {
+    avvisi.push('Riquadro parcheggio non calcolato (errore interno): riprova «Quota e pressione»');
+  }
+  for (const a of parcheggio?.avvisi ?? []) avvisi.push(`Parcheggio: ${a}`);
+
   const ens = ensEsito.status === 'fulfilled' ? ensEsito.value : null;
   if (!ens) avvisi.push('Ensemble non disponibile: niente forbice di probabilità');
 
@@ -1208,9 +1340,287 @@ async function calcolaPrevisione(percorsoIn) {
     fondoSintesi,
     fondoModello: fondoSerie ? fondoModelloNome : null,
     fondoAttivo,
+    // Parcheggio: campo ASSENTE se non inserito (i blocchi distinguono
+    // «non inserito» da «risultato salvato prima della funzione»)
+    ...(parcheggio ? { parcheggio } : {}),
     unitaVento: imp.unitaVento,
     generatoIl: Date.now(),
   };
+}
+
+// ── Parcheggio: taratura dell'altimetro barometrico ─────────────────────
+
+// Contatore dei click su «Quota e pressione»: vince l'ULTIMO. Anche
+// Prevedi lo incrementa: calcola il parcheggio per conto suo e una
+// richiesta del bottone rimasta in volo non deve sovrascriverlo.
+let richiestaParcheggio = 0;
+// Contatore delle richieste di posizione GPS (prompt dei permessi lento)
+let richiestaPosizione = 0;
+
+function testoCoordinate(p) {
+  return `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+}
+
+// NON puro (rete): quota DEM del punto esatto + serie di pressione del
+// modello della traccia alla quota DEM + valutazione pura. Non lancia
+// MAI: ogni fallimento diventa un avviso dichiarato dentro l'oggetto
+// restituito. Condiviso dal bottone del form e da calcolaPrevisione.
+// Ingresso: { lat, lon, percorso, partenzaUtc: Date, arrivoUtc: Date|null,
+//             modello: voce di MODELLI (quella scelta per la traccia), tz }
+// Uscita: r.parcheggio = { lat, lon, quotaM, quotaAttaccoM, distanzaAttaccoM,
+//   partenza, arrivo, derivaM, classeDeriva, modelloNome, righe, avvisi }
+async function calcolaParcheggio({
+  lat,
+  lon,
+  percorso,
+  partenzaUtc,
+  arrivoUtc = null,
+  modello,
+  tz,
+  finestra = null,
+  quotaNotaM = null,
+}) {
+  const avvisiRete = [];
+  const attacco = percorso?.punti?.[0] ?? null;
+  const quotaAttaccoM = Number.isFinite(attacco?.eleM) ? Math.round(attacco.eleM) : null;
+  const dist = distanzaAttaccoM({ lat, lon }, attacco);
+  const distanzaAttacco = Number.isFinite(dist) ? Math.round(dist) : null;
+
+  // 1. Quota DEM del punto ESATTO (quoteDem, non la cache per cella che
+  //    appiattisce ~111 m: su un pendio sarebbero decine di metri)
+  let quotaM = null;
+  try {
+    const [q] = await quoteDem([{ lat, lon }]);
+    quotaM = Number.isFinite(q) ? Math.round(q) : null;
+  } catch {
+    /* dichiarato sotto */
+  }
+  if (quotaM === null && Number.isFinite(quotaNotaM)) {
+    // Ripiego dichiarato: la quota è già stata scaricata per queste stesse
+    // coordinate ed è nei recenti (il terreno non cambia)
+    quotaM = Math.round(quotaNotaM);
+    avvisiRete.push(
+      'Quota del parcheggio dal calcolo precedente salvato nei recenti: il modello del terreno non risponde'
+    );
+  } else if (quotaM === null) {
+    avvisiRete.push(
+      'Quota del parcheggio non ricavata dal modello del terreno (Elevation API non raggiungibile)'
+    );
+  }
+
+  // 2. Pressione: un punto, elevation = quota DEM (la surface_pressure
+  //    segue la quota inviata, verificato dal vivo); senza quota la QNH
+  //    vale comunque, la QFE resta dichiarata mancante
+  // Finestra: quella già calcolata dal contesto quando c'è (contiene il
+  // clamp al limite di calendario Open-Meteo, oltre il quale l'API dà 400)
+  const fine = arrivoUtc ?? partenzaUtc;
+  const startHour = finestra?.startHour ?? oraApiUtc(new Date(partenzaUtc.getTime() - 3600000));
+  const endHour = finestra?.endHour ?? oraApiUtc(new Date(fine.getTime() + 3600000), 'su');
+  const campioni = [{ lat, lon, eleM: quotaM }];
+  const candidati =
+    modello && modello.id !== MODELLI.best_match.id ? [modello, MODELLI.best_match] : [MODELLI.best_match];
+  let serie = null;
+  let modelloNome = null;
+  let ultimoErrore = null;
+  for (const m of candidati) {
+    try {
+      const res = await meteoSerie({ campioni, modello: m, variabili: VARIABILI_PARCHEGGIO, startHour, endHour });
+      if (res?.perCampione?.[0]) {
+        serie = res.perCampione[0];
+        modelloNome = m.nome;
+        if (modello && m.id !== modello.id) {
+          avvisiRete.push(
+            `Pressione al parcheggio dal modello globale ${m.nome} (~${m.risoluzioneKm} km): ${modello.nome} non copre il punto`
+          );
+        }
+        break;
+      }
+    } catch (e) {
+      ultimoErrore = e;
+    }
+  }
+  if (!serie && ultimoErrore) {
+    avvisiRete.push(`Modello meteo non raggiungibile sul parcheggio: ${ultimoErrore.message}`);
+  }
+
+  const istante = (d) => {
+    if (!serie || !d) return null;
+    const v = pressioneAllIstante(serie, d.getTime(), { quotaM });
+    return v ? { oraIso: d.toISOString(), oraLocale: formattaOra(d, tz), ...v } : null;
+  };
+  const partenza = istante(partenzaUtc);
+  const arrivo = istante(arrivoUtc);
+  const val = valutaParcheggio({ quotaM, quotaAttaccoM, distanzaAttaccoM: distanzaAttacco, partenza, arrivo });
+  return {
+    lat,
+    lon,
+    quotaM,
+    quotaAttaccoM,
+    distanzaAttaccoM: distanzaAttacco,
+    partenza,
+    arrivo,
+    derivaM: val.derivaM,
+    classeDeriva: val.classeDeriva,
+    modelloNome: partenza || arrivo ? modelloNome : null,
+    righe: val.righe,
+    avvisi: [...val.avvisi, ...avvisiRete],
+  };
+}
+
+// Click su «Quota e pressione»: parse, salvataggio in cronologia, calcolo.
+// Guardia di IDENTITÀ sul percorso (come pianifica) e non su
+// epocaCorrente: prevedi() la incrementa a ogni lancio e abortirebbe in
+// silenzio un calcolo del parcheggio concorrente; né qui si incrementa
+// l'epoca, altrimenti sarebbe il Prevedi in volo a morire
+async function quotaEPressioneParcheggio() {
+  if (!percorsoCorrente) return;
+  // Invio nel campo deve avere lo stesso gate del bottone: durante
+  // un'altra operazione il bottone è disabilitato e la tastiera pure
+  if ($('bottone-parcheggio').disabled) return;
+  pulisciMessaggi();
+  const p = parseCoordinate($('campo-parcheggio').value);
+  if (!p) {
+    mostraMessaggio(
+      'errore',
+      'Coordinate del parcheggio non riconosciute: usa gradi decimali «lat, lon», es. 42.4428, 13.5582'
+    );
+    return;
+  }
+  aggiornaParcheggioCorrente(p);
+  const quotaNotaM = quotaNotaPer(p);
+  const mioPercorso = percorsoCorrente;
+  const mia = ++richiestaParcheggio;
+  caricamento(true);
+  try {
+    const ctx = await contestoPartenza(mioPercorso);
+    if (mioPercorso !== percorsoCorrente || mia !== richiestaParcheggio) return;
+    const esito = await calcolaParcheggio({
+      lat: p.lat,
+      lon: p.lon,
+      percorso: ctx.percorso,
+      partenzaUtc: ctx.partenzaUtc,
+      arrivoUtc: ctx.arrivo,
+      modello: ctx.scelta.primario,
+      tz: ctx.tz,
+      finestra: ctx.finestra,
+      quotaNotaM,
+    });
+    if (mioPercorso !== percorsoCorrente || mia !== richiestaParcheggio) return;
+    salvaQuotaParcheggio(esito);
+    mostraEsitoParcheggio(esito);
+  } catch (e) {
+    if (mioPercorso !== percorsoCorrente || mia !== richiestaParcheggio) return;
+    mostraMessaggio('errore', e.messaggioUtente || e.message || 'Errore imprevisto');
+  } finally {
+    caricamento(false);
+  }
+}
+
+// Coordinate nuove → stato e cronologia (la quota DEM resta solo se le
+// coordinate non sono cambiate); null → parcheggio tolto dal percorso
+function aggiornaParcheggioCorrente(p) {
+  if (!p) {
+    parcheggioCorrente = null;
+    pulisciEsitoParcheggio();
+  } else {
+    const stesse =
+      parcheggioCorrente && parcheggioCorrente.lat === p.lat && parcheggioCorrente.lon === p.lon;
+    // Coordinate diverse: l'esito calcolato per le precedenti non vale più
+    if (!stesse) pulisciEsitoParcheggio();
+    parcheggioCorrente = { lat: p.lat, lon: p.lon, quotaM: stesse ? parcheggioCorrente.quotaM : null };
+    $('campo-parcheggio').value = testoCoordinate(parcheggioCorrente);
+  }
+  if (voceCorrenteId) storage.cronologiaAggiornaParcheggio(voceCorrenteId, parcheggioCorrente);
+}
+
+// Quota DEM già calcolata per QUESTE coordinate (cronologia o calcolo
+// precedente): ripiego dichiarato quando l'Elevation API non risponde,
+// caso reale al parcheggio senza campo
+function quotaNotaPer(p) {
+  return parcheggioCorrente &&
+    p &&
+    parcheggioCorrente.lat === p.lat &&
+    parcheggioCorrente.lon === p.lon &&
+    Number.isFinite(parcheggioCorrente.quotaM)
+    ? parcheggioCorrente.quotaM
+    : null;
+}
+
+// Quota DEM ottenuta → in cronologia insieme alle coordinate (riaprendo il
+// tour la quota c'è anche offline)
+function salvaQuotaParcheggio(esito) {
+  if (!esito || !Number.isFinite(esito.quotaM)) return;
+  parcheggioCorrente = { lat: esito.lat, lon: esito.lon, quotaM: esito.quotaM };
+  if (voceCorrenteId) storage.cronologiaAggiornaParcheggio(voceCorrenteId, parcheggioCorrente);
+}
+
+function mostraEsitoParcheggio(p) {
+  const box = $('parcheggio-esito');
+  box.innerHTML = htmlParcheggio(p);
+  box.hidden = false;
+}
+
+// «Usa la mia posizione»: SOLO coordinate (coords.altitude è ellissoidica e
+// inutile per la taratura: la quota viene sempre dal DEM). Richiede HTTPS
+// e un gesto utente. Il bottone si disabilita da solo, fuori dal contatore
+// di caricamento: se il browser lascia il prompt dei permessi senza
+// risposta nessuna callback arriva e lo spinner globale resterebbe acceso
+function usaPosizione() {
+  pulisciMessaggi();
+  if (!navigator.geolocation) {
+    mostraMessaggio(
+      'errore',
+      'Geolocalizzazione non supportata da questo browser: inserisci le coordinate a mano'
+    );
+    return;
+  }
+  const b = $('bottone-posizione');
+  b.disabled = true;
+  let sicurezza = null;
+  const riabilita = () => {
+    b.disabled = false;
+    if (sicurezza) clearTimeout(sicurezza);
+  };
+  sicurezza = setTimeout(riabilita, 20000);
+  // Token: una risposta tardiva (prompt dei permessi lasciato aperto e
+  // accettato dopo minuti) non deve sovrascrivere coordinate digitate
+  // nel frattempo né finire su un altro percorso
+  const mia = ++richiestaPosizione;
+  const mioPercorso = percorsoCorrente;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      riabilita();
+      if (mia !== richiestaPosizione || mioPercorso !== percorsoCorrente) return;
+      const { latitude, longitude, accuracy } = pos.coords;
+      $('campo-parcheggio').value = testoCoordinate({ lat: latitude, lon: longitude });
+      // Il campo ora dice altro: l'esito calcolato prima non lo descrive
+      if (!parcheggioCorrente || parcheggioCorrente.lat !== latitude || parcheggioCorrente.lon !== longitude) {
+        pulisciEsitoParcheggio();
+      }
+      const prec = Number.isFinite(accuracy) ? Math.round(accuracy) : null;
+      if (prec != null && prec > ALTIMETRO.precisioneGpsAvvisoM) {
+        mostraMessaggio(
+          'avviso',
+          `Posizione imprecisa (±${prec} m): controlla le coordinate sulla mappa o correggile a mano, poi premi «Quota e pressione»`
+        );
+      } else {
+        mostraMessaggio('info', `Posizione inserita${prec != null ? ` (±${prec} m)` : ''}: premi «Quota e pressione»`);
+      }
+    },
+    (err) => {
+      riabilita();
+      if (mia !== richiestaPosizione || mioPercorso !== percorsoCorrente) return;
+      mostraMessaggio(
+        'errore',
+        err.code === 1
+          ? 'Permesso di posizione negato: consentilo nelle impostazioni del browser oppure inserisci le coordinate a mano'
+          : err.code === 3
+            ? 'Posizione non ottenuta entro 15 s (GPS spento o cielo coperto): riprova all’aperto o inserisci le coordinate a mano'
+            : 'Posizione non disponibile: inserisci le coordinate a mano'
+      );
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
 }
 
 // ── Pianificatore finestre di partenza (24-72 h) ────────────────────────
@@ -1462,6 +1872,7 @@ function render(r) {
     ${r.avvisi.length ? `<div class="avvisi">${r.avvisi.map((a) => `<div>⚠ ${escapeHtml(a)}</div>`).join('')}</div>` : ''}
     ${bloccoFondo(r)}
     ${bloccoAreeProtette(r)}
+    ${bloccoParcheggio(r)}
     <div class="meta-riepilogo">
       Modello ${escapeHtml(r.modello.nome)} (~${r.modello.risoluzioneKm} km)
       ${r.secondarioNome ? ` · confronto con ${escapeHtml(r.secondarioNome)}` : ''}
@@ -1472,6 +1883,9 @@ function render(r) {
   $('riepilogo').hidden = false;
 
   disegnaTraccia({ traccia: r.traccia, campioni: r.campioni.map((c) => ({ ...c, popupHtml: popupCampione(c) })) }, selezionaCampione);
+  // DOPO disegnaTraccia: estende i bounds appena ricalcolati; null toglie
+  // il pin (risultato senza parcheggio o salvato prima della funzione)
+  mostraParcheggio('parcheggio' in r ? r.parcheggio : null);
   renderProfilo(
     $('profilo'),
     {
@@ -1525,6 +1939,31 @@ function bloccoFondo(r) {
     <div class="forbice">Finestra retrospettiva: 72 h per il fango, 120 h per la neve, 48 h per il ghiaccio.
     Fonte ${escapeHtml(r.fondoModello || 'modello primario')} — i giorni passati sono ricostruzione del modello,
     non misure di pioggia. Non conosce tipo di terreno né copertura boschiva.</div>
+  </div>`;
+}
+
+// Riquadro del parcheggio: quota DEM e pressioni previste (mbar) per
+// tarare l'altimetro barometrico prima di partire. Testi di righe e
+// avvisi da valutaParcheggio; qui solo titolo, coordinate e riga di fonte.
+// Campo assente (non inserito, o risultato salvato prima della funzione)
+// → nessun riquadro.
+function bloccoParcheggio(r) {
+  if (!('parcheggio' in r) || !r.parcheggio) return '';
+  return htmlParcheggio(r.parcheggio);
+}
+
+function htmlParcheggio(p) {
+  const righe = (p.righe || [])
+    .map((x) => `<dt>${escapeHtml(x.etichetta)}</dt><dd>${escapeHtml(x.valore)}</dd>`)
+    .join('');
+  const avvisi = p.avvisi?.length
+    ? `<div class="avvisi">${p.avvisi.map((a) => `<div>⚠ ${escapeHtml(a)}</div>`).join('')}</div>`
+    : '';
+  const coord = Number.isFinite(p.lat) && Number.isFinite(p.lon) ? testoCoordinate(p) : '';
+  return `<div class="parcheggio-sintesi${p.avvisi?.length ? ' con-avvisi' : ''}">
+    <strong>Parcheggio · taratura altimetro</strong><span class="coordinate">${escapeHtml(coord)}</span>
+    <dl class="parcheggio-righe">${righe}</dl>${avvisi}
+    <span class="forbice">Quota dal modello del terreno Copernicus (90 m)${p.modelloNome ? ` · pressione prevista (mbar) da ${escapeHtml(p.modelloNome)}` : ''}. Tara l’altimetro sulla quota: QNH e pressione alla quota sono il riscontro.</span>
   </div>`;
 }
 
@@ -1639,6 +2078,8 @@ function init() {
   for (const [campo, azione] of [
     [$('campo-komoot'), caricaKomoot],
     [$('campo-oa'), () => caricaOa()],
+    // Invio nel campo parcheggio = «Quota e pressione», non Prevedi
+    [$('campo-parcheggio'), quotaEPressioneParcheggio],
   ]) {
     campo.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -1655,6 +2096,8 @@ function init() {
   $('bottone-ultimo').addEventListener('click', mostraUltimo);
   $('bottone-ultimo').hidden = !storage.ultimoRisultatoLeggi();
   $('bottone-pianifica').addEventListener('click', pianifica);
+  $('bottone-parcheggio').addEventListener('click', quotaEPressioneParcheggio);
+  $('bottone-posizione').addEventListener('click', usaPosizione);
 
   // Campi condizionali della sosta: «dopo N ore» mostra le ore, «a un
   // orario» mostra il campo time, «in vetta» non chiede nulla

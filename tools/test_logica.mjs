@@ -72,7 +72,18 @@ import { stUtci } from '../js/utci-poly.js';
 import { versantiDaQuote, fattoreFusione, rombo } from '../js/versante.js';
 import { preparaFondo, statoFondo, sintesiFondo, pesoPioggia, descriviFondo } from '../js/fondo.js';
 import { cellaFondo, renderTabella } from '../js/ui/tabella.js';
-import { bloccoFondoPdf } from '../js/ui/marcia.js';
+import { bloccoFondoPdf, bloccoParcheggioPdf } from '../js/ui/marcia.js';
+import {
+  parseCoordinate,
+  distanzaAttaccoM,
+  pressioneAllIstante,
+  qfeDaQnh,
+  qnhStandardDaQfe,
+  derivaAltimetroM,
+  valutaParcheggio,
+} from '../js/parcheggio.js';
+import { cronologiaAggiornaParcheggio } from '../js/storage.js';
+import { ALTIMETRO } from '../js/config.js';
 
 let falliti = 0;
 function test(nome, condizione, dettaglio = '') {
@@ -1610,6 +1621,300 @@ console.log('── Stato del fondo (fango, neve, ghiaccio) ──');
     'PDF: funzione spenta → nessun riquadro',
     bloccoFondoPdf({ fondoSintesi: sint, fondoAttivo: false }) === ''
   );
+}
+
+console.log('── Parcheggio e altimetro ──');
+{
+  // ── parseCoordinate ──
+  const ok = (s) => {
+    const c = parseCoordinate(s);
+    return !!c && vicino(c.lat, 42.4428, 1e-9) && vicino(c.lon, 13.5582, 1e-9);
+  };
+  test('coord: punto decimale e virgola', ok('42.4428, 13.5582'));
+  test('coord: punto decimale e spazio', ok('42.4428 13.5582'));
+  test('coord: punto decimale e punto e virgola senza spazi', ok('42.4428;13.5582'));
+  test('coord: virgola decimale e spazio', ok('42,4428 13,5582'));
+  test('coord: virgola decimale e punto e virgola', ok('42,4428; 13,5582'));
+  test('coord: prefissi N/E staccati', ok('N 42.4428 E 13.5582'));
+  test('coord: suffissi N/E attaccati', ok('42.4428N, 13.5582E'));
+  test('coord: suffissi N/E staccati', ok('42.4428 N, 13.5582 E'));
+  test('coord: parole lat/lon con due punti', ok('lat: 42.4428, lon: 13.5582'));
+  test('coord: longitudine scritta per prima con lettere → scambiata', ok('13.5582 E 42.4428 N'));
+  test('coord: «e» staccata fra i numeri = prefisso del secondo', ok('42.4428 e 13.5582'));
+  test('coord: parentesi e spazi spurî', ok('  (42.4428, 13.5582)  '));
+  const sud = parseCoordinate('42.4428 S, 13.5582 W');
+  test('coord: S e W negativi', !!sud && sud.lat === -42.4428 && sud.lon === -13.5582, JSON.stringify(sud));
+  const neg = parseCoordinate('-42.5, -13.2');
+  test('coord: segni espliciti', !!neg && neg.lat === -42.5 && neg.lon === -13.2);
+  test('coord: tre numeri → null', parseCoordinate('42.4428, 13.5582, 100') === null);
+  test('coord: un numero → null', parseCoordinate('42.4428') === null);
+  test('coord: lat fuori range → null', parseCoordinate('95, 13') === null);
+  test('coord: lon fuori range → null', parseCoordinate('42, 181') === null);
+  test('coord: lettere incoerenti → null', parseCoordinate('42.4428 E, 13.5582 W') === null);
+  test(
+    'coord: vuoto e testo → null',
+    parseCoordinate('') === null && parseCoordinate('parcheggio') === null && parseCoordinate(null) === null
+  );
+  test('coord: gradi-minuti-secondi non supportati → null', parseCoordinate('42°26\'34"N 13°33\'30"E') === null);
+
+  // ── distanzaAttaccoM ──
+  test(
+    'distanza attacco ≈ 968 m',
+    vicino(distanzaAttaccoM({ lat: 42.4428, lon: 13.5582 }, { lat: 42.4428, lon: 13.57 }), 968, 2),
+    String(distanzaAttaccoM({ lat: 42.4428, lon: 13.5582 }, { lat: 42.4428, lon: 13.57 }))
+  );
+  test('distanza attacco 1° di lat ≈ 111,2 km', vicino(distanzaAttaccoM({ lat: 42, lon: 13 }, { lat: 43, lon: 13 }), 111195, 50));
+  test('distanza attacco stesso punto = 0', distanzaAttaccoM({ lat: 42, lon: 13 }, { lat: 42, lon: 13 }) === 0);
+  test('distanza attacco senza punto → null', distanzaAttaccoM({ lat: 42, lon: 13 }, null) === null);
+
+  // ── qfeDaQnh (ipsometrica) ──
+  const qfeCI = qfeDaQnh(1018.7, 2133, 11.5);
+  test('QFE Campo Imperatore ≈ 793,4 mbar (modello 793,4)', vicino(qfeCI, 793.4, 1), String(qfeCI));
+  test('QFE a quota 0 = QNH', qfeDaQnh(1018.7, 0, 11.5) === 1018.7);
+  test('QFE 1000 m ISA-like ≈ 901,2', vicino(qfeDaQnh(1013.25, 1000, 15), 901.2, 0.5), String(qfeDaQnh(1013.25, 1000, 15)));
+  test('QFE cresce con la temperatura', qfeDaQnh(1013.25, 1000, 25) > qfeDaQnh(1013.25, 1000, 5));
+  test('QFE con ingresso mancante → null', qfeDaQnh(null, 2133, 11.5) === null && qfeDaQnh(1018.7, 2133, null) === null);
+
+  // ── qnhStandardDaQfe (quello che mostra l'orologio) ──
+  test('QNH standard da 793,4 mbar a 2133 m ≈ 1028,1', vicino(qnhStandardDaQfe(793.4, 2133), 1028.1, 0.3), String(qnhStandardDaQfe(793.4, 2133)));
+  test('QNH standard a quota 0 = QFE', qnhStandardDaQfe(1013.25, 0) === 1013.25);
+  test('QNH standard: inversa dell’ISA a 1000 m', vicino(qnhStandardDaQfe(898.75, 1000), 1013.25, 0.1));
+
+  // ── derivaAltimetroM ──
+  const d3 = derivaAltimetroM(1018.7, 1015.7, 793, 11.5);
+  test('deriva: −3 mbar a 793 mbar, 11,5 °C → ≈ +31,5 m', vicino(d3, 31.5, 0.5), String(d3));
+  test('deriva: pressione in aumento → negativa (≈ −21,0 m)', vicino(derivaAltimetroM(1018.7, 1020.7, 793, 11.5), -21.0, 0.5));
+  test('deriva: nessuna variazione → 0', derivaAltimetroM(1018.7, 1018.7, 793, 11.5) === 0);
+  test('deriva: 1 mbar al mare ≈ 8,3 m', vicino(derivaAltimetroM(1013, 1012, 1013, 15), 8.3, 0.2));
+  test(
+    'deriva: ingresso non finito o P nulla → null',
+    derivaAltimetroM(null, 1, 1, 1) === null && derivaAltimetroM(1018, 1015, 0, 11.5) === null
+  );
+
+  // ── pressioneAllIstante (interpolazione lineare) ──
+  const serieP = {
+    t0Ms: 0,
+    valori: { pressure_msl: [1018, 1016, 1014], surface_pressure: [800, 798, 796], temperature_2m: [10, 12, 14] },
+  };
+  const meta = pressioneAllIstante(serieP, 30 * 60000, { quotaM: 2133 });
+  test(
+    'istante a metà ora → media delle due ore',
+    !!meta && meta.qnhHpa === 1017 && meta.qfeHpa === 799 && meta.tempC === 11 && meta.qfeStimata === false,
+    JSON.stringify(meta)
+  );
+  const ora1 = pressioneAllIstante(serieP, 3600000, { quotaM: 2133 });
+  test('istante sull’ora piena → valore esatto', ora1.qnhHpa === 1016 && ora1.qfeHpa === 798);
+  test('ultimo istante della finestra → ultimo valore', pressioneAllIstante(serieP, 7200000, { quotaM: 2133 }).qnhHpa === 1014);
+  test('istante oltre la finestra → null', pressioneAllIstante(serieP, 7200000 + 1, { quotaM: 2133 }) === null);
+  test('istante prima della finestra → null', pressioneAllIstante(serieP, -1, { quotaM: 2133 }) === null);
+  test('senza quota dichiarata → QFE null (pressione di cella ignota)', pressioneAllIstante(serieP, 30 * 60000).qfeHpa === null);
+  const serieNoSfc = { t0Ms: 0, valori: { ...serieP.valori, surface_pressure: [null, null, null] } };
+  const ripiego = pressioneAllIstante(serieNoSfc, 30 * 60000, { quotaM: 2133 });
+  test(
+    'surface_pressure null → QFE stimata dalla QNH (≈ 791,8)',
+    !!ripiego && ripiego.qfeStimata === true && vicino(ripiego.qfeHpa, 791.8, 0.5),
+    JSON.stringify(ripiego)
+  );
+  const serieBuco = { t0Ms: 0, valori: { ...serieP.valori, pressure_msl: [1018, null, 1014] } };
+  test('buco su un estremo → l’altro estremo', pressioneAllIstante(serieBuco, 30 * 60000).qnhHpa === 1018);
+  test(
+    'QNH assente → null',
+    pressioneAllIstante(
+      { t0Ms: 0, valori: { pressure_msl: [null, null], surface_pressure: [800, 798], temperature_2m: [10, 12] } },
+      0,
+      { quotaM: 2133 }
+    ) === null
+  );
+  test('serie assente → null', pressioneAllIstante(null, 0) === null && pressioneAllIstante({ t0Ms: NaN, valori: {} }, 0) === null);
+
+  // ── valutaParcheggio ──
+  const P = { oraIso: '2026-08-23T06:00:00.000Z', oraLocale: '08:00', qnhHpa: 1018.7, qfeHpa: 793.4, tempC: 11.5, qfeStimata: false };
+  const A = { oraIso: '2026-08-23T13:30:00.000Z', oraLocale: '15:30', qnhHpa: 1015.7, qfeHpa: 791.0, tempC: 14, qfeStimata: false };
+  const base = { quotaM: 2133, quotaAttaccoM: 2140, distanzaAttaccoM: 350, partenza: P, arrivo: A };
+  const v = valutaParcheggio(base);
+  const riga = (val, re) => val.righe.some((r) => re.test(`${r.etichetta}: ${r.valore}`));
+  test('valuta: deriva da ΔQFE ≈ +25,3 m', vicino(v.derivaM, 25.3, 0.5), String(v.derivaM));
+  test('valuta: classe moderata (15-30 m)', v.classeDeriva === 'moderata');
+  test('valuta: riga quota DEM', riga(v, /^Quota parcheggio \(DEM 90 m\): 2133 m$/));
+  test('valuta: riga attacco con distanza e quota', riga(v, /^Attacco del sentiero: a 350 m, quota 2140 m$/));
+  test('valuta: riga QNH partenza in mbar', riga(v, /^QNH prevista alle 08:00: 1018,7 mbar$/));
+  test('valuta: riga pressione alla quota', riga(v, /^Pressione alla quota del parcheggio alle 08:00: 793,4 mbar$/));
+  test(
+    'valuta: riga QNH dell’orologio (atmosfera standard) con spiegazione',
+    riga(v, /atmosfera standard\): 1028,1 mbar — 9,4 mbar più della QNH prevista per la temperatura reale: non correggere la quota/)
+  );
+  test('valuta: riga temperatura', riga(v, /^Temperatura prevista alle 08:00: 11,5 °C$/));
+  test('valuta: riga QNH arrivo con tendenza', riga(v, /^QNH prevista alle 15:30: 1015,7 mbar \(in calo di 3,0 mbar\)$/));
+  test(
+    'valuta: riga deriva con segno e verso',
+    riga(v, /^Deriva attesa fino alle 15:30: \+25 m \(pressione alla quota in calo: l.altimetro segnerà più del vero\)$/),
+    JSON.stringify(v.righe.filter((r) => /Deriva/.test(r.etichetta)))
+  );
+  test(
+    'valuta: istruzione di taratura sulla quota',
+    riga(v, /^Taratura: Tara l.altimetro sulla quota 2133 m al parcheggio\. La QNH serve solo come controllo$/)
+  );
+  test('valuta: nessun «hPa» nei testi (l’utente legge mbar)', !v.righe.some((r) => /hPa/.test(r.valore + r.etichetta)));
+  test('valuta: caso sano senza avvisi', v.avvisi.length === 0, JSON.stringify(v.avvisi));
+
+  const forte = valutaParcheggio({ ...base, arrivo: { ...A, qfeHpa: 789.4 } });
+  test('valuta: ΔQFE −4 mbar → forte ≈ +42 m', forte.classeDeriva === 'forte' && vicino(forte.derivaM, 42.2, 0.5), String(forte.derivaM));
+  test('valuta: deriva forte → avviso ricalibra', forte.avvisi.some((a) => /ricalibra su una quota nota/.test(a)));
+  const aumento = valutaParcheggio({ ...base, arrivo: { ...A, qfeHpa: 796.4 } });
+  test(
+    'valuta: pressione in aumento → deriva negativa ≈ −32 m',
+    aumento.derivaM < 0 && riga(aumento, /Deriva attesa fino alle 15:30: −32 m \(pressione alla quota in aumento/),
+    String(aumento.derivaM)
+  );
+  // QNH in calo ma pressione alla quota in aumento (riscaldamento diurno
+  // della colonna): il verso deve nominare la quota, non contraddire la
+  // riga della tendenza QNH
+  const opposti = valutaParcheggio({
+    ...base,
+    arrivo: { ...A, qnhHpa: 1017.7, qfeHpa: 795.0, tempC: 18 },
+  });
+  test(
+    'valuta: QNH in calo e QFE in aumento → verso riferito alla quota',
+    riga(opposti, /^QNH prevista alle 15:30: 1017,7 mbar \(in calo di 1,0 mbar\)$/) &&
+      riga(opposti, /Deriva attesa fino alle 15:30: −\d+ m \(pressione alla quota in aumento/),
+    JSON.stringify(opposti.righe.slice(-3))
+  );
+  const quasiZero = valutaParcheggio({ ...base, arrivo: { ...A, qfeHpa: 793.44 } });
+  test(
+    'valuta: deriva fra −0,5 e 0 → «0 m», mai «−0 m»',
+    riga(quasiZero, /Deriva attesa fino alle 15:30: 0 m \(pressione alla quota stabile\)/),
+    String(quasiZero.derivaM)
+  );
+  const piccolo = valutaParcheggio({ ...base, arrivo: { ...A, qfeHpa: 792.4 } });
+  test('valuta: ΔQFE −1 mbar → trascurabile (≈ +10,5 m)', piccolo.classeDeriva === 'trascurabile' && vicino(piccolo.derivaM, 10.5, 0.5));
+  const senzaQfeArr = valutaParcheggio({ ...base, arrivo: { ...A, qfeHpa: null } });
+  test(
+    'valuta: senza QFE all’arrivo → ripiego su ΔQNH riferita alla QFE (≈ +31,6 m)',
+    vicino(senzaQfeArr.derivaM, 31.6, 0.5),
+    String(senzaQfeArr.derivaM)
+  );
+  test(
+    'valuta: ripiego ΔQNH dichiarato nella riga',
+    riga(senzaQfeArr, /Deriva attesa fino alle 15:30: \+32 m \(.*\) — stimata dalla variazione di QNH: pressione alla quota mancante a un estremo/),
+    JSON.stringify(senzaQfeArr.righe.slice(-2))
+  );
+  // Fonti miste (QFE del modello alla partenza, stimata all'arrivo): la
+  // differenza sarebbe artificiale → stesso ripiego dichiarato
+  const misto = valutaParcheggio({ ...base, arrivo: { ...A, qfeHpa: 792.78, qfeStimata: true } });
+  test(
+    'valuta: QFE modello + QFE stimata → ripiego ΔQNH dichiarato, non differenza artificiale',
+    vicino(misto.derivaM, 31.6, 0.5) && riga(misto, /stimata dalla variazione di QNH/),
+    String(misto.derivaM)
+  );
+  const stim = valutaParcheggio({ ...base, partenza: { ...P, qfeStimata: true } });
+  test('valuta: QFE stimata → dichiarata nella riga', riga(stim, /793,4 mbar \(stimata dalla QNH\)/));
+  const lontano = valutaParcheggio({ ...base, distanzaAttaccoM: 3025 });
+  test(
+    'valuta: parcheggio a 3 km → avviso controlla le coordinate',
+    lontano.avvisi.some((a) => /^Parcheggio a 3,0 km dall.attacco del sentiero: controlla le coordinate$/.test(a)),
+    JSON.stringify(lontano.avvisi)
+  );
+  test('valuta: soglia distanza letta da config', valutaParcheggio({ ...base, distanzaAttaccoM: ALTIMETRO.distanzaAttaccoAvvisoM }).avvisi.length === 0);
+
+  const senzaP = valutaParcheggio({ ...base, partenza: null, arrivo: null });
+  test(
+    'valuta: senza pressione → deriva e classe null, avviso dichiarato',
+    senzaP.derivaM === null && senzaP.classeDeriva === null && senzaP.avvisi.some((a) => /Pressione prevista al parcheggio non disponibile/.test(a))
+  );
+  test('valuta: senza pressione → nessun mbar inventato nelle righe', !senzaP.righe.some((r) => /mbar/.test(r.valore)));
+  test('valuta: senza pressione → resta l’istruzione sulla quota', riga(senzaP, /Tara l.altimetro sulla quota 2133 m/));
+  const soloP = valutaParcheggio({ ...base, arrivo: null });
+  test('valuta: senza arrivo → deriva null e avviso', soloP.derivaM === null && soloP.avvisi.some((a) => /deriva dell.altimetro non calcolata/.test(a)));
+  const senzaQ = valutaParcheggio({ ...base, quotaM: null, partenza: { ...P, qfeHpa: null }, arrivo: { ...A, qfeHpa: null } });
+  test(
+    'valuta: senza quota → avviso quota e QNH comunque mostrata',
+    senzaQ.avvisi.some((a) => /^Quota del parcheggio non disponibile/.test(a)) && riga(senzaQ, /QNH prevista alle 08:00: 1018,7 mbar/)
+  );
+  test('valuta: senza quota → deriva non calcolabile, dichiarata', senzaQ.derivaM === null && riga(senzaQ, /Deriva attesa fino alle 15:30: non calcolabile/));
+  test(
+    'valuta: senza quota → nessuna quota inventata nell’istruzione',
+    !riga(senzaQ, /Tara l.altimetro sulla quota \d/) && riga(senzaQ, /Taratura: Tara l.altimetro su una quota nota/)
+  );
+  test('valuta: ingresso vuoto non esplode', valutaParcheggio({}).righe.length >= 2 && valutaParcheggio().derivaM === null);
+
+  // ── Cronologia: merge del parcheggio e aggiornamento in posizione ──
+  cronologiaSvuota();
+  test('cronologia: voce senza id → null', cronologiaAggiungi({}) === null);
+  const v1 = cronologiaAggiungi({ id: 'p', fonte: 'komoot', nome: 'Pi', payload: { tourId: 1 } });
+  test('cronologia: aggiungi restituisce la voce salvata', !!v1 && v1.id === 'p');
+  const agg = cronologiaAggiornaParcheggio('p', { lat: 42.4428, lon: 13.5582, quotaM: 2133 });
+  test('cronologia: aggiorna parcheggio → voce con parcheggio', agg?.parcheggio?.quotaM === 2133 && cronologiaLeggi()[0].parcheggio.lat === 42.4428);
+  cronologiaAggiungi({ id: 'q', fonte: 'gpx', nome: 'Qu' });
+  const ri = cronologiaAggiungi({ id: 'p', fonte: 'komoot', nome: 'Pi', payload: { tourId: 1 } });
+  test('cronologia: merge — riapertura senza parcheggio lo conserva', ri.parcheggio?.lat === 42.4428 && cronologiaLeggi()[0].parcheggio?.quotaM === 2133);
+  test('cronologia: merge — la voce risale in cima', cronologiaLeggi().map((x) => x.id).join(',') === 'p,q');
+  cronologiaAggiornaParcheggio('q', { lat: 46, lon: 11, quotaM: null });
+  test(
+    'cronologia: aggiornamento non sposta la voce',
+    cronologiaLeggi().map((x) => x.id).join(',') === 'p,q' && cronologiaLeggi()[1].parcheggio.quotaM === null
+  );
+  test('cronologia: aggiornamento con coordinate non numeriche → null', cronologiaAggiornaParcheggio('q', { lat: 'x', lon: 11 }) === null);
+  test('cronologia: id inesistente → null, lista intatta', cronologiaAggiornaParcheggio('zz', { lat: 1, lon: 1, quotaM: null }) === null && cronologiaLeggi().length === 2);
+  const tolto = cronologiaAggiornaParcheggio('p', null);
+  test('cronologia: parcheggio null → rimosso', !!tolto && !('parcheggio' in tolto) && !('parcheggio' in cronologiaLeggi()[0]));
+  const esplicito = cronologiaAggiungi({ id: 'q', fonte: 'gpx', nome: 'Qu', parcheggio: { lat: 45, lon: 10, quotaM: 500 } });
+  test('cronologia: parcheggio esplicito nella nuova voce vince', esplicito.parcheggio.lat === 45);
+  const annullato = cronologiaAggiungi({ id: 'q', fonte: 'gpx', nome: 'Qu', parcheggio: null });
+  test('cronologia: parcheggio null esplicito in aggiungi → rimosso', !('parcheggio' in annullato));
+  const originale = { id: 'r', fonte: 'gpx', nome: 'R' };
+  cronologiaAggiungi(originale);
+  test('cronologia: aggiungi non muta l’oggetto del chiamante', !('parcheggio' in originale));
+  cronologiaSvuota();
+
+  // ── PDF: guardie e testi dichiarati ──
+  test('PDF parcheggio: risultato vecchio → nessun riquadro', bloccoParcheggioPdf({}) === '');
+  test('PDF parcheggio: campo null → nessun riquadro', bloccoParcheggioPdf({ parcheggio: null }) === '');
+  const htmlPdf = bloccoParcheggioPdf({
+    parcheggio: { lat: 42.4428, lon: 13.5582, quotaM: 2133, modelloNome: 'ICON-2I', ...senzaP },
+  });
+  test('PDF parcheggio: senza pressione → dichiarato', /non disponibile/.test(htmlPdf) && /TARATURA ALTIMETRO/.test(htmlPdf));
+  test(
+    'PDF parcheggio: righe e avvisi stampati',
+    /Quota parcheggio \(DEM 90 m\)/.test(htmlPdf) && /⚠ Pressione prevista al parcheggio non disponibile/.test(htmlPdf)
+  );
+  test('PDF parcheggio: coordinate nel titolo', /\(42\.44280, 13\.55820\)/.test(htmlPdf));
+  test('PDF parcheggio: oggetto parziale non esplode', bloccoParcheggioPdf({ parcheggio: { righe: [], avvisi: [] } }).includes('TARATURA'));
+
+  // ── CSV: righe meta solo con il parcheggio ──
+  const rCsv = {
+    nome: 'Prova',
+    totKm: 10,
+    dPlusM: 500,
+    dMinusM: 500,
+    partenzaIso: '2026-08-23T06:00:00.000Z',
+    arrivoIso: '2026-08-23T13:30:00.000Z',
+    tz: 'Europe/Rome',
+    modello: { nome: 'ICON-2I' },
+    generatoIl: Date.parse('2026-08-22T18:00:00Z'),
+    campioni: [],
+    avvisi: [],
+  };
+  const csvSenza = csvCompleto(rCsv);
+  const csvCon = csvCompleto({
+    ...rCsv,
+    parcheggio: { lat: 42.4428, lon: 13.5582, quotaM: 2133, partenza: P, arrivo: A, derivaM: 25.3 },
+  });
+  test('CSV: senza parcheggio nessuna riga dedicata', !/parcheggio lat|QNH prevista mbar/.test(csvSenza));
+  test(
+    'CSV: con parcheggio le righe meta in mbar',
+    /parcheggio lat;42,44280\r\n/.test(csvCon) &&
+      /quota parcheggio m;2133\r\n/.test(csvCon) &&
+      /QNH prevista mbar;1018,7\r\n/.test(csvCon) &&
+      /QFE parcheggio mbar;793,4;\r\n/.test(csvCon) &&
+      /deriva altimetro m;25\r\n/.test(csvCon),
+    csvCon.slice(0, 600)
+  );
+  test('CSV: il resto del file resta identico', csvSenza.split('\r\n').length + 6 === csvCon.split('\r\n').length);
+  const csvStimata = csvCompleto({
+    ...rCsv,
+    parcheggio: { lat: 42.4428, lon: 13.5582, quotaM: 2133, partenza: { ...P, qfeStimata: true }, arrivo: A, derivaM: 25.3 },
+  });
+  test('CSV: QFE stimata dichiarata anche fuori dall’app', /QFE parcheggio mbar;793,4;stimata dalla QNH\r\n/.test(csvStimata));
 }
 
 console.log('');

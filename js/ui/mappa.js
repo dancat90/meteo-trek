@@ -13,6 +13,9 @@ let markerCampioni = [];
 let fallbackFatto = false;
 let boundsTraccia = null;
 let bottoneCentra = null;
+// Pin del parcheggio: marker proprio, NON in layerTraccia (che viene
+// svuotato da disegnaTraccia e pulisciTraccia)
+let markerParcheggio = null;
 
 // Escape HTML per dati remoti interpolati nei popup (anti-XSS)
 export const escapeHtml = (s) =>
@@ -90,7 +93,40 @@ export function pulisciTraccia() {
   layerTraccia?.clearLayers();
   markerCampioni = [];
   boundsTraccia = null;
+  rimuoviParcheggio();
   if (bottoneCentra) bottoneCentra.style.display = 'none';
+}
+
+function rimuoviParcheggio() {
+  if (markerParcheggio) {
+    markerParcheggio.remove();
+    markerParcheggio = null;
+  }
+}
+
+// Pin «P» del parcheggio (taratura altimetro). Da chiamare DOPO
+// disegnaTraccia: estende i bounds appena calcolati (anche il bottone
+// «ricentra» includerà il parcheggio) e rifà il fit. null → toglie il pin.
+export function mostraParcheggio(p) {
+  rimuoviParcheggio();
+  if (!mappa || !p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return;
+  const quota = Number.isFinite(p.quotaM) ? ` · quota ${Math.round(p.quotaM)} m` : '';
+  markerParcheggio = L.marker([p.lat, p.lon], {
+    icon: L.divIcon({
+      className: 'pin-wrap',
+      html: '<div class="pin-parcheggio" aria-label="Parcheggio">P</div>',
+      // Centraggio sul punto via CSS (translate -50%/-50%), come i pin numerati
+      iconSize: null,
+      iconAnchor: [0, 0],
+    }),
+    zIndexOffset: 1000,
+  })
+    .bindTooltip(`Parcheggio${quota}`)
+    .addTo(mappa);
+  if (boundsTraccia) {
+    boundsTraccia.extend([p.lat, p.lon]);
+    mappa.fitBounds(boundsTraccia, { padding: [28, 28] });
+  }
 }
 
 // Disegna la traccia colorata e i marker dei campioni.

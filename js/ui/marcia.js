@@ -159,6 +159,24 @@ export function bloccoFondoPdf(r) {
     modello${r.fondoModello ? ` (${escapeHtml(r.fondoModello)})` : ''}, non misure di pioggia.</small></p>`;
 }
 
+// Riquadro del parcheggio per il PDF: l'altimetro si tara al parcheggio,
+// col foglio in mano e spesso senza rete. Campo assente (parcheggio non
+// inserito o risultato salvato prima della funzione) → niente riquadro.
+// Testi di righe e avvisi da valutaParcheggio; qui solo titolo e fonte.
+export function bloccoParcheggioPdf(r) {
+  if (!r || !('parcheggio' in r) || !r.parcheggio) return '';
+  const p = r.parcheggio;
+  const coord =
+    Number.isFinite(p.lat) && Number.isFinite(p.lon) ? ` (${p.lat.toFixed(5)}, ${p.lon.toFixed(5)})` : '';
+  const righe = (p.righe || [])
+    .map((x) => `<tr><th>${escapeHtml(x.etichetta)}</th><td>${escapeHtml(x.valore)}</td></tr>`)
+    .join('');
+  const avvisi = (p.avvisi || []).map((a) => `<br>⚠ ${escapeHtml(a)}`).join('');
+  return `<div class="parcheggio"><strong>PARCHEGGIO — TARATURA ALTIMETRO</strong>${escapeHtml(coord)}
+    <table>${righe}</table>${avvisi}
+    <br><small>Quota dal modello del terreno (90 m)${p.modelloNome ? ` · pressione prevista (mbar) da ${escapeHtml(p.modelloNome)}` : ''}. Tara l'altimetro sulla quota.</small></div>`;
+}
+
 function testataTramonto(r) {
   if (!r.tramontoIso) return 'tramonto non calcolabile a questa latitudine';
   const t = formattaOra(new Date(r.tramontoIso), r.tz);
@@ -519,6 +537,11 @@ function esportaPdf(r, righe, puntiMappa) {
   .meta { margin: 0 0 12px; color: #333; }
   .allarme { border: 2px solid #000; padding: 6px 8px; margin: 0 0 12px; font-weight: bold; }
   .fondo { border: 1px solid #000; border-left: 4px solid #000; padding: 6px 8px; margin: 0 0 12px; }
+  .parcheggio { border: 1px solid #000; border-left: 4px solid #000; padding: 6px 8px; margin: 0 0 12px; }
+  /* La micro-tabella non eredita la griglia a bordi della tabella di marcia */
+  .parcheggio table { width: auto; margin: 4px 0 0; }
+  .parcheggio th, .parcheggio td { border: 0; background: none; text-align: left; padding: 1px 10px 1px 0; font-weight: normal; }
+  .parcheggio th { color: #333; }
   .mappa { width: 100%; max-height: 60vh; object-fit: contain; border: 1px solid #999; margin-bottom: 8px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { border: 1px solid #999; padding: 3px 6px; text-align: center; }
@@ -543,6 +566,7 @@ ${
     : ''
 }
 ${bloccoFondoPdf(r)}
+${bloccoParcheggioPdf(r)}
 ${blocco}
 <table><thead><tr>
   <th>#</th><th>ora</th><th>tempo parz/tot</th><th>km parz/tot</th><th>quota</th>
